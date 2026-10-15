@@ -299,6 +299,140 @@ Five extra members (`alex@`, `priya@`, `sam@`, `taylor@`, `noah@taskflow.dev`, p
 7. **Payments → List Plans** (public) → **Create Checkout Session** → complete the Stripe test page → **Verify Payment** with `session_id`.
 8. **Admin** folder as `admin@taskflow.dev`, **Contact → Send Message** (public) then list/update it as admin.
 
+### Endpoint guide — what each request does and how to test it
+
+Every request below lives in the imported collection. "Any" under Access means `auth()` with no role restriction. Base path is `{{baseUrl}}` = `/api/v1`.
+
+#### Health
+
+| Endpoint | How it works | How to test |
+| --- | --- | --- |
+| `GET /` | Returns server status, no auth. | Run first — `200 { success: true, message: "Server is running" }`. Anything else means the server is down. |
+
+#### Auth — `/auth`
+
+| Endpoint | How it works | How to test |
+| --- | --- | --- |
+| `POST /register` | Creates an **unverified** account (`provider: CREDENTIALS`) and emails a 6-digit OTP (Redis, 5-min TTL, 60-s resend cooldown). | Fresh email + password (8–24 chars, upper+lower) + `role` `PROJECT_MANAGER`/`TEAM_MEMBER` → `200 "OTP has been sent to email"`. In dev the OTP is printed to the server console as `[DEV]: User registration otp log -> …`. Existing verified email → `409`. |
+| `POST /verify-email` | Checks the OTP, flips `is_verified` to `true` and opens a session (sets both cookies). | `email` + the 6-digit OTP → `201` + cookies. Wrong OTP → `400`, expired → `404`. |
+| `POST /resend-otp` | Stores a fresh OTP and re-sends the mail; 60-s cooldown between sends. | After register → `200`. Call twice in a minute → `429`. |
+| `POST /login` | Verifies email+password (all account guards: deleted/suspended/inactive), sets `access_token`/`refresh_token` cookies, and (dev only) returns both tokens in the body. | `manager@taskflow.dev` / `Manager@123` → `200`, collection Test tab shows `Login successful — access_token & refresh_token captured`. Wrong password → `401`, suspended → `403`, unknown email → `404`. |
+| `POST /google` | Verifies a Google ID token against `GOOGLE_CLIENT_ID`, then signs in the matching email, **links** Google to a credentials account, or creates a new `TEAM_MEMBER` (`provider: GOOGLE`, `is_verified: true`). Returns the same session as login. | Needs `GOOGLE_CLIENT_ID` in `.env` + a real ID token pasted into `{{google_id_token}}` → `200` with `data.user` + tokens. Bogus token → `401`; client id unset → `500 "Google login is not configured"`. |
+| `POST /forgot-password` | Finds the account (must be verified, not Google-only), emails a reset OTP (5-min TTL, 60-s cooldown). | `{ "email": "member@taskflow.dev" }` → `200` and `[DEV]: Password reset otp log -> …` in the console. Unknown email → `404`, Google-only → `403`, spamming → `429`. |
+| `POST /reset-password` | Consumes the OTP (single use), re-hashes `new_password`, sets `need_password_change: true` and revokes the tracked refresh token (kills old sessions), then emails a confirmation. | Run Forgot first, paste the OTP → `200`. Then Login works with the **new** password, fails with the old one (`401`), and reusing the OTP → `404`. Wrong OTP → `400`. |
+| `POST /refresh` | Exchanges a valid `refresh_token` (cookie first, `Authorization` fallback) for a rotated pair — the access token may already be expired, which is why this route has no auth guard. | Send any time → `200` + new cookies (and `need_password_change` in `data.user`). Stolen/expired token → `401`. |
+| `POST /logout` | Revokes the tracked refresh token server-side and clears both cookies. | With a session → `200`; afterwards `Get Current User` fails until you log in again. |
+| `GET /me` | Returns the session's user (`{ id, email, role }` from the JWT, re-read from DB). | The quickest auth check: `200` after Login, `400 "You are not logged in…"` otherwise. |
+
+#### Users — `/users`
+
+| Endpoint | How it works | How to test |
+| --- | --- | --- |
+| `GET /` | ADMIN-only light user list (pagination + search/role/user_status). | As `admin@taskflow.dev` → `200` with `data` + `meta`. As manager → `401`. |
+| `GET /me` | Full profile minus the password — includes `provider`, `is_verified`, `need_password_change`, timestamps. | After Login → `200`. |
+| `PATCH /me` | Updates `name` and/or `email` (both optional; email uniqueness enforced). | `{ "name": "New Name" }` → `200`. An email owned by someone else → `409`. |
+| `PATCH /me/password` | Compares `current_password`, stores the hash of `new_password`, and **clears `need_password_change`**. | Wrong current → `401`. Valid pair → `200`; then log in with the new password. |
+| `PATCH /me/avatar` | multipart `avatar` → Cloudinary, replaces `avatar_url`/`avatar_public_id` (old image destroyed). | Pick a file ≤10 MB in the Body tab → `200` with the new URL. No file → `400`. |
+
+#### Projects — `/projects`
+
+| Endpoint | How it works | How to test |
+| --- | --- | --- |
+| `POST /projects/invitations/accept` | Consumes the emailed invitation token and adds you as a `ProjectMember`. | Log in as the invitee, paste the token from the mail → `200`. Garbage token → `4xx`. |
+| `POST /projects/invitations/decline` | Same token flow, marks the invitation `DECLINED`. | As invitee with a valid token → `200`. |
+| `GET /invitations/mine` | Lists invitations addressed to the signed-in user (pending/accepted/…). | Any signed-in user → `200`. |
+| `GET /projects` | Owner's projects (`PROJECT_MANAGER`) or all (`ADMIN`); `page/limit/search/status/sortBy/sortOrder`. | As manager → `200`; as team member → `401` (role gate). |
+| `POST /projects` | Creates a project owned by the caller. `name` (≤100) and `start_date` required; plan limits enforced (FREE=2, PRO=15, BUSINESS=∞). | `{ "name": "Postman Smoke Test", "status": "PLANNING", "start_date": "2026-10-15" }` → `200` — copy the returned `id` into `{{projectId}}`. Over the plan limit → `403`. |
+| `GET /projects/:id` | Project details; access = owner, ADMIN or a member of that project. | Owner or member → `200`; an outsider → `403`/`404`. |
+| `PATCH /projects/:id` | Owner-only partial update (same fields as create). | `{ "status": "ACTIVE" }` → `200`. |
+| `DELETE /projects/:id` | Owner or ADMIN; cascades memberships/tasks ownership cleanup. | As owner → `200`; then `GET :id` → `404`. |
+| `GET /projects/:id/members` | Members of the project with their roles. | Owner/member → `200`. |
+| `DELETE /projects/:id/members/:memberId` | Owner removes a member (`memberId` is the ProjectMember id from the members list). | From the members response → `200`. |
+| `POST /projects/:id/invitations` | Owner invites a user by email; an invitation token is emailed. | `{ "email": "member@taskflow.dev" }` → `200`; then accept it as that user. |
+| `GET /projects/:id/invitations` | Owner's view of that project's invitations and statuses. | → `200`. |
+
+#### Tasks — `/tasks`
+
+| Endpoint | How it works | How to test |
+| --- | --- | --- |
+| `GET /tasks` | Task list for one project — `projectId` **required**; optional `status/priority/assigneeId/search/dueBefore/page/limit/sortBy/sortOrder`. TEAM_MEMBERs only see tasks assigned to them. | `{{projectId}}` filled → `200`. Without `projectId` → empty/400 behaviour per service filter. |
+| `POST /tasks` | PROJECT_MANAGER creates a task in a project (`projectId` + `title` ≤200 required; `labels` ≤10 × 30 chars; `due_date`, `assigneeId` nullable). | Body in the Test-data table → `200` — copy the `id` into `{{taskId}}`. As team member → `401`. |
+| `GET /tasks/board` | Kanban payload grouped into `TODO / IN_PROGRESS / IN_REVIEW / DONE` with positions. | With `projectId` → `200`; compare columns after a status move. |
+| `GET /tasks/:id` | Single task with owner/assignee info; project members only. | → `200`; unknown id → `404`. |
+| `PATCH /tasks/:id` | Owner-only partial update — `status` deliberately excluded (move endpoint owns it). | `{ "priority": "URGENT" }` → `200`. |
+| `DELETE /tasks/:id` | Owner or ADMIN. | → `200`; `GET :id` then → `404`. |
+| `PATCH /tasks/:id/status` | Kanban move; allowed for the owner, assignee and manager — ADMIN alone is **blocked**. | `{ "status": "IN_PROGRESS" }` → `200`; check `/tasks/board` reflects it. Invalid enum → `400`. |
+| `PATCH /tasks/:id/assign` | Manager assigns (`assigneeId`) or unassigns (`null`); the assignee gets a notification. | `{ "assigneeId": "{{userId}}" }` → `200`. |
+
+#### Comments — mounted under `/tasks`
+
+| Endpoint | How it works | How to test |
+| --- | --- | --- |
+| `GET /tasks/:taskId/comments` | Threaded comments (with `parent_id` replies) for a task. | → `200`. |
+| `POST /tasks/:taskId/comments` | PROJECT_MANAGER/TEAM_MEMBER adds a comment (≤5000 chars); `parent_id` optional for replies; triggers a notification. | `{ "body": "Looks good!", "parent_id": null }` → `200`. |
+| `PATCH /tasks/comments/:commentId` | Author edits their own comment. | As the author → `200`; as another member → `403`. |
+| `DELETE /tasks/comments/:commentId` | PROJECT_MANAGER or ADMIN removes a comment. | → `200`. |
+
+#### Attachments — mounted under `/tasks`
+
+| Endpoint | How it works | How to test |
+| --- | --- | --- |
+| `POST /tasks/:taskId/attachments` | multipart `files` (≤5, 10 MB each) → Cloudinary. **Plan-gated**: PRO/BUSINESS only. | Pick files in the Body tab → `200`. On a FREE owner → `403`. |
+| `GET /tasks/:taskId/attachments` | Attachment list (URLs, sizes) for a task. | → `200`. |
+| `DELETE /tasks/attachments/:attachmentId` | PROJECT_MANAGER/TEAM_MEMBER deletes the file (Cloudinary cleanup). | → `200`. |
+
+#### Notifications — `/notifications`
+
+| Endpoint | How it works | How to test |
+| --- | --- | --- |
+| `GET /notifications` | Own notifications; `page/limit/unreadOnly=true/sortBy/sortOrder`. | → `200`. |
+| `GET /notifications/unread-count` | Badge counter only. | Compare before/after the two PATCH calls. |
+| `PATCH /notifications/read-all` | Marks everything read. | → `200`; unread-count drops to 0. |
+| `PATCH /notifications/:id/read` | Marks one notification read. | Use an id from the list → `200`. |
+
+#### Payments — `/payments`
+
+| Endpoint | How it works | How to test |
+| --- | --- | --- |
+| `GET /plans` | Public pricing table (FREE/PRO/BUSINESS limits). | No auth → `200`. |
+| `POST /checkout` | PROJECT_MANAGER starts a Stripe checkout session (inline `price_data`, USD 12/29 per month). Only PRO/BUSINESS purchasable. | `{ "plan": "PRO" }` → `200` with a checkout URL; `{ "plan": "FREE" }` → `400`. |
+| `GET /subscription` | The caller's current plan + status + period end. | → `200`. |
+| `GET /verify` | Confirms a Stripe session after payment and activates the plan. `session_id` required. | After paying on the Stripe test page, pass `?session_id=cs_…` → `200`, plan becomes PRO. Missing param → `400`. |
+| `GET /history` | The manager's own payments; filters `status/plan/page/limit`. | → `200`. |
+| `GET /history/admin` | ADMIN view of every payment. | As admin → `200`; as manager → `401`. |
+| `POST /webhook` | Stripe signs the **raw** body; the signature is verified before JSON parsing. | A hand-made request normally → `400` — that is correct. To test properly run `npm run stripe:webhook` and use Stripe CLI triggers. |
+
+#### Analytics — `/analytics`
+
+| Endpoint | How it works | How to test |
+| --- | --- | --- |
+| `GET /admin` | ADMIN platform totals (users, active projects, tasks, MRR), 12-month revenue/signups, tasks by status — flat arrays for Recharts. | As admin → `200`; as manager → `401`. |
+| `GET /manager` | PROJECT_MANAGER: completion rate, tasks/projects by status, member workload, 8-week overdue trend. | As manager → `200`. |
+| `GET /project/:projectId` | Per-project variant; **owner only**. | Owner → `200`; another manager → `403`. |
+| `GET /member` | TEAM_MEMBER: my tasks by status, completion rate, overdue count. | As member → `200`; as manager → `401`. |
+
+#### Admin — `/admin` (every route requires ADMIN)
+
+| Endpoint | How it works | How to test |
+| --- | --- | --- |
+| `GET /users` | Platform users with project/task counters; `search/role/user_status/sort/page`. | As `admin@taskflow.dev` → `200`. |
+| `PATCH /users/:id/status` | Sets `ACTIVE`/`SUSPENDED` (cannot suspend yourself or the seed admin). | `{ "user_status": "SUSPENDED" }` → `200`; that user's next request → `401`. |
+| `PATCH /users/:id/role` | Changes a user's role (`ADMIN`/`PROJECT_MANAGER`/`TEAM_MEMBER`). | `{ "role": "TEAM_MEMBER" }` → `200`. |
+| `GET /projects` | Every project platform-wide; `ownerName` search. | → `200`. |
+| `DELETE /projects/:id` | Force-deletes any project. | → `200`. |
+| `GET /payments` | All payments with `status/plan` filters. | → `200`. |
+| `GET /reports` | Paginated audit log (`action` contains / `entity` equals) + platform totals. | → `200`. |
+| `GET /settings` | The three platform switches. | → `200` with current values. |
+| `PATCH /settings` | Partial update of `maintenance_mode`/`registration_open`/`support_email` — at least one required. **`maintenance_mode: true` makes every `/api/v1` route answer 503 for non-admins** (auth + webhook stay open), so turn it straight back off. | `{ "registration_open": false }` → `200`; verify with `GET /settings`. |
+
+#### Contact — `/contact`
+
+| Endpoint | How it works | How to test |
+| --- | --- | --- |
+| `POST /` | Public contact form; all four fields required (name ≤100, subject ≤150, message ≤5000) and the support inbox is emailed (best-effort). | The Test-data body → `200`. Missing field → `400`. |
+| `GET /` | ADMIN list with `status` filter and pagination. | As admin → `200`. |
+| `PATCH /:id` | ADMIN moves a message through `NEW` → `READ` → `RESOLVED`. | `{ "status": "RESOLVED" }` → `200`. |
+
 ### Expected results and gotchas
 
 - Success codes: `200` for most reads/updates, `201` for Verify Email and some creations. `400` = missing/invalid body or not logged in, `401` = wrong role or suspended, `403` = ownership/plan limit, `404` = unknown id, `409`/duplicate complaints come from the service layer.
