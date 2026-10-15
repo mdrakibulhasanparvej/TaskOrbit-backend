@@ -1,0 +1,32 @@
+model Task {
+  id          String  @id @default(uuid())
+  title       String
+  description String?
+
+  status   TaskStatus   @default(TODO)
+  priority TaskPriority @default(MEDIUM)
+  due_date DateTime?
+  labels   String[]     @default([])
+
+  // ordering inside a Kanban column
+  position Int @default(0)
+
+  project_id String
+  project    Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  assignee_id String?
+  assignee    User?   @relation("TaskAssignee", fields: [assignee_id], references: [id], onDelete: SetNull)
+
+  created_by_id String
+  created_by    User   @relation("TaskCreator", fields: [created_by_id], references: [id], onDelete: Cascade)
+
+  comments    Comment[]
+  attachments Attachment[]
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@index([project_id])
+  @@index([assignee_id])
+  @@map("tasks")
+}

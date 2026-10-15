@@ -1,0 +1,20 @@
+model Comment {
+  id    String  @id @default(uuid())
+  body  String
+  task_id String
+  author_id String
+  parent_id String?
+
+  task   Task    @relation(fields: [task_id], references: [id], onDelete: Cascade)
+  author User    @relation(fields: [author_id], references: [id], onDelete: Cascade)
+  parent Comment? @relation("CommentReplies", fields: [parent_id], references: [id], onDelete: Cascade)
+  replies Comment[] @relation("CommentReplies")
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@index([task_id])
+  @@index([author_id])
+  @@index([parent_id])
+  @@map("comments")
+}

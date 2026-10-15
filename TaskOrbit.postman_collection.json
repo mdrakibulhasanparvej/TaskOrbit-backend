@@ -1,0 +1,1329 @@
+{
+	"info": {
+		"name": "TaskOrbit API",
+		"description": "Test collection for the TaskOrbit backend (Express + Prisma).\n\n**Setup**\n1. Start the server (`PORT=5000` from `.env`). Base URL variable: `{{baseUrl}}` = `http://localhost:5000/api/v1`.\n2. Auth tokens are issued as **HttpOnly cookies** (`access_token`, `refresh_token`) — never in the response body. Postman's cookie jar stores them automatically on Login / Verify-Email / Refresh, and sends them on every later request. Keep the cookie jar enabled.\n3. Fallback: if you need header auth (e.g. a JWT copied from a browser), set the collection variable `access_token` — a collection-level pre-request script then adds `Authorization: Bearer <token>` automatically. Leave it empty to rely on cookies.\n4. Flow: Register → Verify Email (OTP from mail/Redis) → Login → use the rest. Fill `{{projectId}}`, `{{taskId}}`, `{{commentId}}`, `{{userId}}`, `{{memberId}}`, `{{attachmentId}}`, `{{notificationId}}`, `{{contactId}}`, `{{invitationToken}}`, `{{sessionId}}` as you discover real IDs.\n\n**Roles**\n- `ADMIN` — seeded admin account (see `src/app/utils/seed.ts`).\n- `PROJECT_MANAGER` — creates projects/tasks, invites members.\n- `TEAM_MEMBER` — comments, attachments, status moves, invitations.\n- Any authenticated user can hit routes guarded by `auth()` with no role.\n\nA collection-level test asserts no 5xx on every request.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"// Optional header-auth fallback: only sent when access_token is non-empty.",
+					"const t = pm.collectionVariables.get('access_token');",
+					"if (t) {",
+					"\tpm.request.headers.upsert({ key: 'Authorization', value: 'Bearer ' + t });",
+					"}"
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"pm.test('No 5xx server error', function () {",
+					"\tpm.expect(pm.response.code).to.be.below(500);",
+					"});",
+					"// Mirror the session cookie into access_token so it also works as a header fallback.",
+					"try {",
+					"\tconst c = pm.cookies.get('access_token');",
+					"\tif (c) pm.collectionVariables.set('access_token', (c && c.value) ? c.value : c);",
+					"} catch (e) {}"
+				]
+			}
+		}
+	],
+	"variable": [
+		{ "key": "baseUrl", "value": "http://localhost:5000/api/v1" },
+		{ "key": "serverUrl", "value": "http://localhost:5000" },
+		{ "key": "access_token", "value": "" },
+		{ "key": "email", "value": "tester@example.com" },
+		{ "key": "password", "value": "Password123" },
+		{ "key": "otp", "value": "123456" },
+		{ "key": "userId", "value": "" },
+		{ "key": "projectId", "value": "" },
+		{ "key": "taskId", "value": "" },
+		{ "key": "commentId", "value": "" },
+		{ "key": "attachmentId", "value": "" },
+		{ "key": "notificationId", "value": "" },
+		{ "key": "contactId", "value": "" },
+		{ "key": "memberId", "value": "" },
+		{ "key": "invitationToken", "value": "" },
+		{ "key": "sessionId", "value": "" }
+	],
+	"item": [
+		{
+			"name": "Health",
+			"item": [
+				{
+					"name": "Server is running",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{serverUrl}}/",
+							"host": ["{{serverUrl}}"],
+							"path": [""]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Auth",
+			"description": "Register → Verify Email → Login sets the `access_token` / `refresh_token` HttpOnly cookies used by every other folder.",
+			"item": [
+				{
+					"name": "Register",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Test User\",\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"role\": \"PROJECT_MANAGER\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/auth/register",
+							"host": ["{{baseUrl}}"],
+							"path": ["auth", "register"]
+						}
+					},
+					"description": "Public. `role` must be `PROJECT_MANAGER` or `TEAM_MEMBER` (ADMIN is not allowed here). Password: 8-24 chars, at least one uppercase + one lowercase. Responds with \"OTP has been sent to email\".",
+					"response": []
+				},
+				{
+					"name": "Verify Email",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{email}}\",\n  \"otp\": \"{{otp}}\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/auth/verify-email",
+							"host": ["{{baseUrl}}"],
+							"path": ["auth", "verify-email"]
+						}
+					},
+					"description": "Public. `otp` must be exactly 6 digits. Success (201) sets both session cookies.",
+					"response": []
+				},
+				{
+					"name": "Resend OTP",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{email}}\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/auth/resend-otp",
+							"host": ["{{baseUrl}}"],
+							"path": ["auth", "resend-otp"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Login",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/auth/login",
+							"host": ["{{baseUrl}}"],
+							"path": ["auth", "login"]
+						}
+					},
+					"description": "Public. Sets `access_token` (1d) and `refresh_token` (7d) as HttpOnly cookies — no token in the body. Postman stores them in its cookie jar; the collection test script also mirrors `access_token` into a variable.",
+					"response": []
+				},
+				{
+					"name": "Refresh Session",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"url": {
+							"raw": "{{baseUrl}}/auth/refresh",
+							"host": ["{{baseUrl}}"],
+							"path": ["auth", "refresh"]
+						}
+					},
+					"description": "No auth guard (the access token may already be expired). Reads `refresh_token` cookie, falls back to `Authorization: Bearer <refresh token>`.",
+					"response": []
+				},
+				{
+					"name": "Logout",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"url": {
+							"raw": "{{baseUrl}}/auth/logout",
+							"host": ["{{baseUrl}}"],
+							"path": ["auth", "logout"]
+						}
+					},
+					"description": "Requires an authenticated session. Clears both cookies.",
+					"response": []
+				},
+				{
+					"name": "Get Current User (auth/me)",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/auth/me",
+							"host": ["{{baseUrl}}"],
+							"path": ["auth", "me"]
+						}
+					},
+					"description": "Any authenticated user. Quick way to confirm the cookie/header auth is working.",
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Users",
+			"item": [
+				{
+					"name": "List All Users",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/users?page=1&limit=10",
+							"host": ["{{baseUrl}}"],
+							"path": ["users"],
+							"query": [
+								{ "key": "page", "value": "1" },
+								{ "key": "limit", "value": "10" }
+							]
+						}
+					},
+					"description": "ADMIN only.",
+					"response": []
+				},
+				{
+					"name": "Get My Profile",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/users/me",
+							"host": ["{{baseUrl}}"],
+							"path": ["users", "me"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Update My Profile",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "PATCH",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Updated Name\",\n  \"email\": \"{{email}}\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/users/me",
+							"host": ["{{baseUrl}}"],
+							"path": ["users", "me"]
+						}
+					},
+					"description": "Both fields optional.",
+					"response": []
+				},
+				{
+					"name": "Change My Password",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "PATCH",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"current_password\": \"{{password}}\",\n  \"new_password\": \"NewPassword123\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/users/me/password",
+							"host": ["{{baseUrl}}"],
+							"path": ["users", "me", "password"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Update My Avatar",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "PATCH",
+						"header": [],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{ "key": "avatar", "type": "file", "src": [] }
+							]
+						},
+						"url": {
+							"raw": "{{baseUrl}}/users/me/avatar",
+							"host": ["{{baseUrl}}"],
+							"path": ["users", "me", "avatar"]
+						}
+					},
+					"description": "multipart/form-data, field name `avatar`, max 10 MB. Pick a file in Postman before sending.",
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Projects",
+			"item": [
+				{
+					"name": "Accept Invitation",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"token\": \"{{invitationToken}}\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/projects/invitations/accept",
+							"host": ["{{baseUrl}}"],
+							"path": ["projects", "invitations", "accept"]
+						}
+					},
+					"description": "TEAM_MEMBER or PROJECT_MANAGER.",
+					"response": []
+				},
+				{
+					"name": "Decline Invitation",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"token\": \"{{invitationToken}}\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/projects/invitations/decline",
+							"host": ["{{baseUrl}}"],
+							"path": ["projects", "invitations", "decline"]
+						}
+					},
+					"description": "TEAM_MEMBER or PROJECT_MANAGER.",
+					"response": []
+				},
+				{
+					"name": "Get My Invitations",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/projects/invitations/mine",
+							"host": ["{{baseUrl}}"],
+							"path": ["projects", "invitations", "mine"]
+						}
+					},
+					"description": "Any authenticated user.",
+					"response": []
+				},
+				{
+					"name": "List My Projects",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/projects?page=1&limit=10&sortBy=created_at&sortOrder=desc",
+							"host": ["{{baseUrl}}"],
+							"path": ["projects"],
+							"query": [
+								{ "key": "page", "value": "1" },
+								{ "key": "limit", "value": "10" },
+								{ "key": "search", "value": "", "description": "optional text search" },
+								{ "key": "status", "value": "", "description": "PLANNING | ACTIVE | ON_HOLD | COMPLETED | ARCHIVED" },
+								{ "key": "sortBy", "value": "created_at" },
+								{ "key": "sortOrder", "value": "desc", "description": "asc | desc" }
+							]
+						}
+					},
+					"description": "PROJECT_MANAGER or ADMIN.",
+					"response": []
+				},
+				{
+					"name": "Create Project",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Apollo Project\",\n  \"description\": \"Created from Postman\",\n  \"status\": \"PLANNING\",\n  \"start_date\": \"2026-10-15\",\n  \"end_date\": \"2026-12-31\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/projects",
+							"host": ["{{baseUrl}}"],
+							"path": ["projects"]
+						}
+					},
+					"description": "PROJECT_MANAGER only. `name` (max 100) and `start_date` required; `description`/`end_date` accept null; `status` optional enum.",
+					"response": []
+				},
+				{
+					"name": "Get Project By ID",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/projects/{{projectId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["projects", "{{projectId}}"]
+						}
+					},
+					"description": "PROJECT_MANAGER, ADMIN or TEAM_MEMBER.",
+					"response": []
+				},
+				{
+					"name": "Update Project",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "PATCH",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Apollo Project (updated)\",\n  \"status\": \"ACTIVE\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/projects/{{projectId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["projects", "{{projectId}}"]
+						}
+					},
+					"description": "PROJECT_MANAGER. All fields optional (same shape as create, minus required).",
+					"response": []
+				},
+				{
+					"name": "Delete Project",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/projects/{{projectId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["projects", "{{projectId}}"]
+						}
+					},
+					"description": "PROJECT_MANAGER or ADMIN.",
+					"response": []
+				},
+				{
+					"name": "Get Project Members",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/projects/{{projectId}}/members",
+							"host": ["{{baseUrl}}"],
+							"path": ["projects", "{{projectId}}", "members"]
+						}
+					},
+					"description": "PROJECT_MANAGER, ADMIN or TEAM_MEMBER.",
+					"response": []
+				},
+				{
+					"name": "Remove Member",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/projects/{{projectId}}/members/{{memberId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["projects", "{{projectId}}", "members", "{{memberId}}"]
+						}
+					},
+					"description": "PROJECT_MANAGER only. `memberId` is the ProjectMember id.",
+					"response": []
+				},
+				{
+					"name": "Invite Member",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"teammate@example.com\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/projects/{{projectId}}/invitations",
+							"host": ["{{baseUrl}}"],
+							"path": ["projects", "{{projectId}}", "invitations"]
+						}
+					},
+					"description": "PROJECT_MANAGER only.",
+					"response": []
+				},
+				{
+					"name": "Get Project Invitations",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/projects/{{projectId}}/invitations",
+							"host": ["{{baseUrl}}"],
+							"path": ["projects", "{{projectId}}", "invitations"]
+						}
+					},
+					"description": "PROJECT_MANAGER only.",
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Tasks",
+			"item": [
+				{
+					"name": "List Tasks",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/tasks?projectId={{projectId}}&page=1&limit=10&sortBy=position&sortOrder=asc",
+							"host": ["{{baseUrl}}"],
+							"path": ["tasks"],
+							"query": [
+								{ "key": "projectId", "value": "{{projectId}}", "description": "required" },
+								{ "key": "page", "value": "1" },
+								{ "key": "limit", "value": "10" },
+								{ "key": "search", "value": "", "description": "text search on title" },
+								{ "key": "status", "value": "", "description": "TODO | IN_PROGRESS | IN_REVIEW | DONE" },
+								{ "key": "priority", "value": "", "description": "LOW | MEDIUM | HIGH | URGENT" },
+								{ "key": "assigneeId", "value": "", "description": "user id" },
+								{ "key": "dueBefore", "value": "", "description": "ISO date, e.g. 2026-12-31" },
+								{ "key": "sortBy", "value": "position", "description": "title | status | priority | due_date | position | created_at | updated_at" },
+								{ "key": "sortOrder", "value": "asc" }
+							]
+						}
+					},
+					"description": "Any authenticated user. `projectId` is required.",
+					"response": []
+				},
+				{
+					"name": "Create Task",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"projectId\": \"{{projectId}}\",\n  \"title\": \"Build the landing page\",\n  \"description\": \"Hero, pricing and footer sections\",\n  \"priority\": \"HIGH\",\n  \"due_date\": \"2026-10-30\",\n  \"labels\": [\"frontend\", \"ui\"],\n  \"assigneeId\": null\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/tasks",
+							"host": ["{{baseUrl}}"],
+							"path": ["tasks"]
+						}
+					},
+					"description": "PROJECT_MANAGER only. `projectId` + `title` (max 200) required; `labels` max 10 entries of max 30 chars; `assigneeId` may be null.",
+					"response": []
+				},
+				{
+					"name": "Get Board (Kanban)",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/tasks/board?projectId={{projectId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["tasks", "board"],
+							"query": [{ "key": "projectId", "value": "{{projectId}}" }]
+						}
+					},
+					"description": "Any authenticated user. Returns tasks grouped by status column.",
+					"response": []
+				},
+				{
+					"name": "Get Task By ID",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/tasks/{{taskId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["tasks", "{{taskId}}"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Update Task",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "PATCH",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"title\": \"Build the landing page (updated)\",\n  \"priority\": \"URGENT\",\n  \"labels\": [\"frontend\"]\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/tasks/{{taskId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["tasks", "{{taskId}}"]
+						}
+					},
+					"description": "PROJECT_MANAGER only. All fields optional; `status` is deliberately excluded (use the status endpoint).",
+					"response": []
+				},
+				{
+					"name": "Delete Task",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/tasks/{{taskId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["tasks", "{{taskId}}"]
+						}
+					},
+					"description": "PROJECT_MANAGER or ADMIN.",
+					"response": []
+				},
+				{
+					"name": "Move Task (change status)",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "PATCH",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"status\": \"IN_PROGRESS\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/tasks/{{taskId}}/status",
+							"host": ["{{baseUrl}}"],
+							"path": ["tasks", "{{taskId}}", "status"]
+						}
+					},
+					"description": "Any authenticated user (assigned member / manager). `status`: TODO | IN_PROGRESS | IN_REVIEW | DONE.",
+					"response": []
+				},
+				{
+					"name": "Assign Task",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "PATCH",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"assigneeId\": \"{{userId}}\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/tasks/{{taskId}}/assign",
+							"host": ["{{baseUrl}}"],
+							"path": ["tasks", "{{taskId}}", "assign"]
+						}
+					},
+					"description": "PROJECT_MANAGER only. Send `null` to unassign.",
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Comments",
+			"description": "Mounted under /api/v1/tasks — comment CRUD lives beside the task routes.",
+			"item": [
+				{
+					"name": "List Task Comments",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/tasks/{{taskId}}/comments",
+							"host": ["{{baseUrl}}"],
+							"path": ["tasks", "{{taskId}}", "comments"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Create Comment",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"body\": \"Looks good to me!\",\n  \"parent_id\": null\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/tasks/{{taskId}}/comments",
+							"host": ["{{baseUrl}}"],
+							"path": ["tasks", "{{taskId}}", "comments"]
+						}
+					},
+					"description": "PROJECT_MANAGER or TEAM_MEMBER. `parent_id` optional (threaded replies), max 5000 chars.",
+					"response": []
+				},
+				{
+					"name": "Update Comment",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "PATCH",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"body\": \"Updated comment body\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/tasks/comments/{{commentId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["tasks", "comments", "{{commentId}}"]
+						}
+					},
+					"description": "Any authenticated user (own comment).",
+					"response": []
+				},
+				{
+					"name": "Delete Comment",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/tasks/comments/{{commentId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["tasks", "comments", "{{commentId}}"]
+						}
+					},
+					"description": "PROJECT_MANAGER or ADMIN.",
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Attachments",
+			"description": "Also mounted under /api/v1/tasks.",
+			"item": [
+				{
+					"name": "Upload Attachments",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{ "key": "files", "type": "file", "src": [] }
+							]
+						},
+						"url": {
+							"raw": "{{baseUrl}}/tasks/{{taskId}}/attachments",
+							"host": ["{{baseUrl}}"],
+							"path": ["tasks", "{{taskId}}", "attachments"]
+						}
+					},
+					"description": "PROJECT_MANAGER or TEAM_MEMBER. multipart field `files`, up to 5 files, 10 MB each.",
+					"response": []
+				},
+				{
+					"name": "List Task Attachments",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/tasks/{{taskId}}/attachments",
+							"host": ["{{baseUrl}}"],
+							"path": ["tasks", "{{taskId}}", "attachments"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Attachment",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/tasks/attachments/{{attachmentId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["tasks", "attachments", "{{attachmentId}}"]
+						}
+					},
+					"description": "PROJECT_MANAGER or TEAM_MEMBER.",
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Notifications",
+			"item": [
+				{
+					"name": "List Notifications",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/notifications?page=1&limit=10",
+							"host": ["{{baseUrl}}"],
+							"path": ["notifications"],
+							"query": [
+								{ "key": "page", "value": "1" },
+								{ "key": "limit", "value": "10" },
+								{ "key": "unreadOnly", "value": "false", "description": "true to only see unread" },
+								{ "key": "sortBy", "value": "created_at" },
+								{ "key": "sortOrder", "value": "desc" },
+								{ "key": "searchTerm", "value": "" }
+							]
+						}
+					},
+					"description": "Any authenticated user.",
+					"response": []
+				},
+				{
+					"name": "Unread Count",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/notifications/unread-count",
+							"host": ["{{baseUrl}}"],
+							"path": ["notifications", "unread-count"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Mark All As Read",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "PATCH",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"url": {
+							"raw": "{{baseUrl}}/notifications/read-all",
+							"host": ["{{baseUrl}}"],
+							"path": ["notifications", "read-all"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Mark One As Read",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "PATCH",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"url": {
+							"raw": "{{baseUrl}}/notifications/{{notificationId}}/read",
+							"host": ["{{baseUrl}}"],
+							"path": ["notifications", "{{notificationId}}", "read"]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Payments",
+			"item": [
+				{
+					"name": "List Plans (public)",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/payments/plans",
+							"host": ["{{baseUrl}}"],
+							"path": ["payments", "plans"]
+						}
+					},
+					"description": "No auth required.",
+					"response": []
+				},
+				{
+					"name": "Create Checkout Session",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"plan\": \"PRO\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/payments/checkout",
+							"host": ["{{baseUrl}}"],
+							"path": ["payments", "checkout"]
+						}
+					},
+					"description": "PROJECT_MANAGER only. `plan` must be PRO or BUSINESS (FREE is rejected). Needs Stripe keys in `.env`. Returns a checkout URL.",
+					"response": []
+				},
+				{
+					"name": "Get Subscription",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/payments/subscription",
+							"host": ["{{baseUrl}}"],
+							"path": ["payments", "subscription"]
+						}
+					},
+					"description": "PROJECT_MANAGER only.",
+					"response": []
+				},
+				{
+					"name": "Verify Payment",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/payments/verify?session_id={{sessionId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["payments", "verify"],
+							"query": [
+								{ "key": "session_id", "value": "{{sessionId}}", "description": "required — Stripe checkout session id" }
+							]
+						}
+					},
+					"description": "PROJECT_MANAGER only. 400 without `session_id`.",
+					"response": []
+				},
+				{
+					"name": "Payment History (mine)",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/payments/history?page=1&limit=10",
+							"host": ["{{baseUrl}}"],
+							"path": ["payments", "history"],
+							"query": [
+								{ "key": "page", "value": "1" },
+								{ "key": "limit", "value": "10" },
+								{ "key": "status", "value": "", "description": "PENDING | SUCCESS | FAILED | REFUNDED" },
+								{ "key": "plan", "value": "", "description": "FREE | PRO | BUSINESS" },
+								{ "key": "sortBy", "value": "" },
+								{ "key": "sortOrder", "value": "" }
+							]
+						}
+					},
+					"description": "PROJECT_MANAGER only.",
+					"response": []
+				},
+				{
+					"name": "Payment History (admin)",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/payments/history/admin?page=1&limit=10",
+							"host": ["{{baseUrl}}"],
+							"path": ["payments", "history", "admin"],
+							"query": [
+								{ "key": "page", "value": "1" },
+								{ "key": "limit", "value": "10" },
+								{ "key": "status", "value": "" },
+								{ "key": "plan", "value": "" }
+							]
+						}
+					},
+					"description": "ADMIN only.",
+					"response": []
+				},
+				{
+					"name": "Stripe Webhook",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [
+							{ "key": "Content-Type", "value": "application/json" },
+							{ "key": "stripe-signature", "value": "t=1717000000,v1=your_signature_here" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"id\": \"evt_test_webhook\",\n  \"type\": \"checkout.session.completed\",\n  \"data\": {\n    \"object\": {\n      \"id\": \"cs_test_session\"\n    }\n  }\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/payments/webhook",
+							"host": ["{{baseUrl}}"],
+							"path": ["payments", "webhook"]
+						}
+					},
+					"description": "No auth. Stripe verifies the raw body against the `stripe-signature` header, so a hand-made request will normally be rejected with 400 — expected unless the signature is computed with the webhook secret.",
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Analytics",
+			"item": [
+				{
+					"name": "Admin Analytics",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/analytics/admin",
+							"host": ["{{baseUrl}}"],
+							"path": ["analytics", "admin"]
+						}
+					},
+					"description": "ADMIN only.",
+					"response": []
+				},
+				{
+					"name": "Manager Analytics",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/analytics/manager",
+							"host": ["{{baseUrl}}"],
+							"path": ["analytics", "manager"]
+						}
+					},
+					"description": "PROJECT_MANAGER only.",
+					"response": []
+				},
+				{
+					"name": "Project Analytics",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/analytics/project/{{projectId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["analytics", "project", "{{projectId}}"]
+						}
+					},
+					"description": "PROJECT_MANAGER only.",
+					"response": []
+				},
+				{
+					"name": "Member Analytics",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/analytics/member",
+							"host": ["{{baseUrl}}"],
+							"path": ["analytics", "member"]
+						}
+					},
+					"description": "TEAM_MEMBER only.",
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Admin",
+			"description": "Every route in this folder requires the ADMIN role.",
+			"item": [
+				{
+					"name": "List Users",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/admin/users?page=1&limit=10",
+							"host": ["{{baseUrl}}"],
+							"path": ["admin", "users"],
+							"query": [
+								{ "key": "page", "value": "1" },
+								{ "key": "limit", "value": "10" },
+								{ "key": "search", "value": "" },
+								{ "key": "role", "value": "", "description": "ADMIN | PROJECT_MANAGER | TEAM_MEMBER" },
+								{ "key": "user_status", "value": "", "description": "ACTIVE | SUSPENDED" },
+								{ "key": "sortBy", "value": "" },
+								{ "key": "sortOrder", "value": "" }
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Set User Status",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "PATCH",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"user_status\": \"SUSPENDED\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/admin/users/{{userId}}/status",
+							"host": ["{{baseUrl}}"],
+							"path": ["admin", "users", "{{userId}}", "status"]
+						}
+					},
+					"description": "`user_status`: ACTIVE | SUSPENDED.",
+					"response": []
+				},
+				{
+					"name": "Change User Role",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "PATCH",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"role\": \"TEAM_MEMBER\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/admin/users/{{userId}}/role",
+							"host": ["{{baseUrl}}"],
+							"path": ["admin", "users", "{{userId}}", "role"]
+						}
+					},
+					"description": "`role`: ADMIN | PROJECT_MANAGER | TEAM_MEMBER.",
+					"response": []
+				},
+				{
+					"name": "List All Projects",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/admin/projects?page=1&limit=10",
+							"host": ["{{baseUrl}}"],
+							"path": ["admin", "projects"],
+							"query": [
+								{ "key": "page", "value": "1" },
+								{ "key": "limit", "value": "10" },
+								{ "key": "search", "value": "" },
+								{ "key": "ownerName", "value": "" },
+								{ "key": "status", "value": "", "description": "PLANNING | ACTIVE | ON_HOLD | COMPLETED | ARCHIVED" }
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Any Project",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/admin/projects/{{projectId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["admin", "projects", "{{projectId}}"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "List All Payments",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/admin/payments?page=1&limit=10",
+							"host": ["{{baseUrl}}"],
+							"path": ["admin", "payments"],
+							"query": [
+								{ "key": "page", "value": "1" },
+								{ "key": "limit", "value": "10" },
+								{ "key": "status", "value": "" },
+								{ "key": "plan", "value": "" }
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Audit Reports",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/admin/reports?page=1&limit=10",
+							"host": ["{{baseUrl}}"],
+							"path": ["admin", "reports"],
+							"query": [
+								{ "key": "page", "value": "1" },
+								{ "key": "limit", "value": "10" },
+								{ "key": "action", "value": "", "description": "case-insensitive contains" },
+								{ "key": "entity", "value": "", "description": "case-insensitive equals" }
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Platform Settings",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/admin/settings",
+							"host": ["{{baseUrl}}"],
+							"path": ["admin", "settings"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Update Platform Settings",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "PATCH",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"maintenance_mode\": false,\n  \"registration_open\": true,\n  \"support_email\": \"support@taskorbit.dev\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/admin/settings",
+							"host": ["{{baseUrl}}"],
+							"path": ["admin", "settings"]
+						}
+					},
+					"description": "All three fields optional, but at least one must be present. Careful: enabling `maintenance_mode` blocks every /api/v1 route until it is turned off again.",
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Contact",
+			"item": [
+				{
+					"name": "Send Contact Message (public)",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Test User\",\n  \"email\": \"{{email}}\",\n  \"subject\": \"Question about pricing\",\n  \"message\": \"Hello, does the PRO plan include unlimited projects?\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/contact",
+							"host": ["{{baseUrl}}"],
+							"path": ["contact"]
+						}
+					},
+					"description": "Public. All four fields required (name ≤100, subject ≤150, message ≤5000).",
+					"response": []
+				},
+				{
+					"name": "List Contact Messages",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/contact?page=1&limit=10",
+							"host": ["{{baseUrl}}"],
+							"path": ["contact"],
+							"query": [
+								{ "key": "page", "value": "1" },
+								{ "key": "limit", "value": "10" },
+								{ "key": "status", "value": "", "description": "NEW | READ | RESOLVED" }
+							]
+						}
+					},
+					"description": "ADMIN only.",
+					"response": []
+				},
+				{
+					"name": "Update Contact Status",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "PATCH",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"status\": \"RESOLVED\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/contact/{{contactId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["contact", "{{contactId}}"]
+						}
+					},
+					"description": "ADMIN only. `status`: NEW | READ | RESOLVED.",
+					"response": []
+				}
+			]
+		}
+	]
+}

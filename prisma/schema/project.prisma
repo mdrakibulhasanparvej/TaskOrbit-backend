@@ -1,0 +1,22 @@
+model Project {
+  id          String        @id @default(uuid())
+  name        String
+  description String?
+  status      ProjectStatus @default(PLANNING)
+
+  start_date DateTime
+  end_date   DateTime?
+
+  owner_id String
+  owner    User   @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+
+  members     ProjectMember[]
+  invitations ProjectInvitation[]
+  tasks       Task[]
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@index([owner_id])
+  @@map("projects")
+}

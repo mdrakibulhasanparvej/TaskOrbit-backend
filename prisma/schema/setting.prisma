@@ -1,0 +1,12 @@
+// Feature flags and platform-wide knobs, addressed by a stable string key.
+// Seeded keys: maintenance_mode (false), registration_open (true),
+// support_email (string).
+model PlatformSetting {
+  id    String @id @default(uuid())
+  key   String @unique
+  value Json
+
+  updated_at DateTime @updatedAt
+
+  @@map("platform_settings")
+}

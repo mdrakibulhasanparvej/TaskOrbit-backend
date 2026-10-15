@@ -1,0 +1,19 @@
+model Subscription {
+  id                   String             @id @default(uuid())
+  plan                 Plan               @default(FREE)
+  status               SubscriptionStatus @default(ACTIVE)
+  current_period_end   DateTime?
+  cancel_at_period_end Boolean            @default(false)
+
+  owner_id String
+  owner    User   @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  // one row per owner, enforced by the service (find-or-create inside the
+  // activation transaction) rather than by a schema-level unique constraint
+  @@index([owner_id])
+  @@index([owner_id, status])
+  @@map("subscriptions")
+}

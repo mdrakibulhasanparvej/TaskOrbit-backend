@@ -1,0 +1,39 @@
+model User {
+  id       String  @id @default(uuid())
+  name     String
+  email    String  @unique
+  password String?
+
+  google_id String? @unique
+
+  avatar_url       String?
+  avatar_public_id String?
+
+  role        Role       @default(TEAM_MEMBER)
+  provider    Providers  @default(CREDENTIALS)
+  user_status UserStatus @default(ACTIVE)
+
+  is_active   Boolean @default(true)
+  is_deleted  Boolean @default(false)
+  is_verified Boolean @default(false)
+
+  last_login_at DateTime?
+
+  owned_projects      Project[]
+  project_memberships ProjectMember[]
+  invitations_sent    ProjectInvitation[]
+  assigned_tasks      Task[]              @relation("TaskAssignee")
+  created_tasks       Task[]              @relation("TaskCreator")
+  comments            Comment[]
+  attachments         Attachment[]
+  notifications       Notification[]
+  subscriptions       Subscription[]
+  payments            Payment[]
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@index([role])
+  @@index([user_status])
+  @@map("users")
+}

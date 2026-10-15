@@ -1,0 +1,21 @@
+model Payment {
+  id               String           @id @default(uuid())
+  plan             Plan
+  amount           Float
+  currency         String           @default("USD")
+  status           PaymentStatus    @default(PENDING)
+  payment_gateway PaymentGateway   @default(STRIPE)
+  // Stripe Checkout Session id — the idempotency key for activation
+  transaction_id String?  @unique
+  gateway_response Json?
+
+  owner_id String
+  owner    User   @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@index([owner_id])
+  @@index([owner_id, status])
+  @@map("payments")
+}

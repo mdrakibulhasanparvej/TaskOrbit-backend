@@ -1,0 +1,20 @@
+model Notification {
+  id    String           @id @default(uuid())
+  type  NotificationType
+  title String
+  message String
+  is_read Boolean        @default(false)
+  link  String?
+
+  user_id String
+  user    User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  // plain ids (no relation) keep user deletes non-blocking; name is snapshotted
+  actor_id   String?
+  actor_name String?
+
+  created_at DateTime @default(now())
+
+  @@index([user_id, is_read])
+  @@map("notifications")
+}

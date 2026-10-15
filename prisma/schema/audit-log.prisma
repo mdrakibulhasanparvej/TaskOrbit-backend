@@ -1,0 +1,22 @@
+// Deliberately relation-free: an audit trail must survive the deletion of the
+// users and projects it references, so actor/entity ids stay plain strings.
+model AuditLog {
+  id         String  @id @default(uuid())
+  actor_id   String?
+  // denormalized snapshot — the actor's display name at the time of the action
+  actor_name String?
+  actor_role Role?
+
+  // dotted verb, e.g. "project.created", "user.suspended", "payment.success"
+  action    String
+  entity    String
+  entity_id String?
+  meta      Json?
+
+  created_at DateTime @default(now())
+
+  @@index([action])
+  @@index([entity])
+  @@index([created_at])
+  @@map("audit_logs")
+}
