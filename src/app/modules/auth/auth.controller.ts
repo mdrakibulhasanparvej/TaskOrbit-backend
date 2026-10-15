@@ -44,7 +44,7 @@ const sessionCookieOptions = () => ({
 	path: "/",
 });
 
-/** access_token (1d) + refresh_token (7d), both HttpOnly — never sent in a body. */
+/** access_token (1d) + refresh_token (7d), both HttpOnly — the login response additionally returns them in the body. */
 const setSessionCookies = (
 	res: Response,
 	tokens: { access_token: string; refresh_token: string },
@@ -96,9 +96,21 @@ const login = catchAsync(async (req, res) => {
 
 	setSessionCookies(res, result);
 
+	// Dev/test only: also expose the session tokens in the body so API clients
+	// (Postman, scripts) can pick them up without reading the cookie jar.
+	// Production keeps the cookie-only contract — HttpOnly cookies stay set in
+	// every environment either way.
+	const includeTokensInBody = config.environment !== "production";
+
 	sendResponse(res, {
 		message: "Login successful",
-		data: { user: result.user },
+		data: {
+			user: result.user,
+			...(includeTokensInBody && {
+				access_token: result.access_token,
+				refresh_token: result.refresh_token,
+			}),
+		},
 	});
 });
 

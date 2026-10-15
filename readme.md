@@ -1,6 +1,6 @@
 # TaskFlow Backend
 
-TaskFlow is a project-management SaaS backend: teams create projects, plan work on a Kanban board, collaborate with comments and attachments, and pay for higher plan limits through Stripe. It is a TypeScript Express API in front of PostgreSQL (Prisma) with Redis for OTP throttling, refresh-token tracking and notification dedupe.
+TaskFlow is a project-management SaaS backend: teams create projects, plan work on a Kanban board, collaborate with comments and attachments and pay for higher plan limits through Stripe. It is a TypeScript Express API in front of PostgreSQL (Prisma) with Redis for OTP throttling, refresh-token tracking and notification dedupe.
 
 ## Tech Stack
 
@@ -26,35 +26,35 @@ Health check: `GET /` → `{ "success": true, "message": "Server is running" }`.
 
 Create `.env` in the project root (never commit it):
 
-| Variable | Used by | Notes |
-| --- | --- | --- |
-| `ENVIRONMENT`, `PORT`, `FRONTEND_URL` | core | `PORT=5000`, CORS origin comes from `FRONTEND_URL` |
-| `DATABASE_URL`, `BCRYPT_SALT_ROUNDS` | core | PostgreSQL connection string |
-| `JWT_ACCESS_SECRET`, `JWT_ACCESS_TIME` | auth | access token lifetime, e.g. `1d` |
-| `JWT_REFRESH_SECRET`, `JWT_REFRESH_TIME` | auth | refresh token lifetime, e.g. `7d` |
-| `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | avatars, attachments | |
-| `REDIS_USERNAME`, `REDIS_PASSWORD`, `REDIS_HOST`, `REDIS_PORT` | redis lib | OTP throttling, refresh-token tracking, notification dedupe |
-| `EMAIL_SENDER`, `GOOGLE_APP_PASSWORD` | nodemailer | Gmail app password for OTP, invitations, receipts |
-| `ADMIN_NAME`, `ADMIN_EMAIL`, `ADMIN_PASSWORD` | seed | env-configured admin created at boot |
-| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | payments | test-mode `sk_test_...` / `whsec_...` |
+| Variable                                                               | Used by              | Notes                                                       |
+| ---------------------------------------------------------------------- | -------------------- | ----------------------------------------------------------- |
+| `ENVIRONMENT`, `PORT`, `FRONTEND_URL`                                  | core                 | `PORT=5000`, CORS origin comes from `FRONTEND_URL`          |
+| `DATABASE_URL`, `BCRYPT_SALT_ROUNDS`                                   | core                 | PostgreSQL connection string                                |
+| `JWT_ACCESS_SECRET`, `JWT_ACCESS_TIME`                                 | auth                 | access token lifetime, e.g. `1d`                            |
+| `JWT_REFRESH_SECRET`, `JWT_REFRESH_TIME`                               | auth                 | refresh token lifetime, e.g. `7d`                           |
+| `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | avatars, attachments |                                                             |
+| `REDIS_USERNAME`, `REDIS_PASSWORD`, `REDIS_HOST`, `REDIS_PORT`         | redis lib            | OTP throttling, refresh-token tracking, notification dedupe |
+| `EMAIL_SENDER`, `GOOGLE_APP_PASSWORD`                                  | nodemailer           | Gmail app password for OTP, invitations, receipts           |
+| `ADMIN_NAME`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`                          | seed                 | env-configured admin created at boot                        |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`                           | payments             | test-mode `sk_test_...` / `whsec_...`                       |
 
 ### Scripts
 
-| Script | What it does |
-| --- | --- |
-| `npm run dev` | `tsx watch src/server.ts` |
-| `npm run build` / `npm start` | bundle with tsup / run `dist/server.js` |
-| `npm run seed` | idempotent demo dataset (see below) |
-| `npm run check` | Biome check with `--write` (format + lint fixes) |
-| `npm run stripe:webhook` | `stripe listen --forward-to localhost:5000/api/v1/payments/webhook` |
+| Script                        | What it does                                                        |
+| ----------------------------- | ------------------------------------------------------------------- |
+| `npm run dev`                 | `tsx watch src/server.ts`                                           |
+| `npm run build` / `npm start` | bundle with tsup / run `dist/server.js`                             |
+| `npm run seed`                | idempotent demo dataset (see below)                                 |
+| `npm run check`               | Biome check with `--write` (format + lint fixes)                    |
+| `npm run stripe:webhook`      | `stripe listen --forward-to localhost:5000/api/v1/payments/webhook` |
 
 ## Demo Accounts (created by `npm run seed`)
 
-| Email | Password | Role | Redirect |
-| --- | --- | --- | --- |
-| `admin@taskflow.dev` | `Admin@123` | ADMIN | /admin |
-| `manager@taskflow.dev` | `Manager@123` | PROJECT_MANAGER | /manager |
-| `member@taskflow.dev` | `Member@123` | TEAM_MEMBER | /dashboard |
+| Email                  | Password      | Role            | Redirect   |
+| ---------------------- | ------------- | --------------- | ---------- |
+| `admin@taskflow.dev`   | `Admin@123`   | ADMIN           | /admin     |
+| `manager@taskflow.dev` | `Manager@123` | PROJECT_MANAGER | /manager   |
+| `member@taskflow.dev`  | `Member@123`  | TEAM_MEMBER     | /dashboard |
 
 Five extra TEAM_MEMBER accounts (`alex@`, `priya@`, `sam@`, `taylor@`, `noah@taskflow.dev`, password `Member@123`) populate the workload charts. Every seeded account is verified.
 
@@ -66,7 +66,7 @@ npm run seed
 
 ## Authentication Model
 
-Auth is **cookie-first**: no token is ever returned in a response body. `login`, `verify-email` and `refresh` respond with `{ success, message, data: { user } }` and set two HttpOnly cookies — `access_token` (1d) and `refresh_token` (7d, rotated on every refresh).
+Auth is **cookie-first**: `login`, `verify-email` and `refresh` set two HttpOnly cookies — `access_token` (1d) and `refresh_token` (7d, rotated on every refresh). Outside production (`ENVIRONMENT !== "production"` — i.e. dev/test), the **login** response additionally returns both tokens in the body so non-browser clients (Postman, scripts) can pick them up directly: `{ success, message: "Login successful", data: { user, access_token, refresh_token } }`. `verify-email` and `refresh` stay body-free: `{ success, message, data: { user } }`.
 
 - `auth(...roles)` resolves credentials as `access_token` cookie → `refresh_token` cookie → optional `Authorization: Bearer` header (either secret).
 - After the token it loads the user and checks `is_deleted` / `user_status` / `is_active` / `is_verified`, then the role allow-list. Role-layer mismatches answer **401**; ownership and plan checks inside services answer **403**.
@@ -74,14 +74,14 @@ Auth is **cookie-first**: no token is ever returned in a response body. `login`,
 
 ## Roles and Permissions
 
-| Capability | ADMIN | PROJECT_MANAGER | TEAM_MEMBER |
-| --- | --- | --- | --- |
-| Platform analytics, admin users/projects/payments/reports/settings | ✅ | ❌ | ❌ |
-| Create/update/delete own projects, invite members, manage tasks | ✅ (any project) | ✅ (owned) | ❌ |
-| Move a task on the board | ❌ | ✅ | ✅ (assigned tasks only) |
-| Comments / attachments | ✅ | ✅ | ✅ (member of the project) |
-| Billing (checkout, subscription, history) | ✅ | ✅ | ❌ |
-| Personal progress, notifications, profile | ✅ | ✅ | ✅ |
+| Capability                                                         | ADMIN            | PROJECT_MANAGER | TEAM_MEMBER                |
+| ------------------------------------------------------------------ | ---------------- | --------------- | -------------------------- |
+| Platform analytics, admin users/projects/payments/reports/settings | ✅               | ❌              | ❌                         |
+| Create/update/delete own projects, invite members, manage tasks    | ✅ (any project) | ✅ (owned)      | ❌                         |
+| Move a task on the board                                           | ❌               | ✅              | ✅ (assigned tasks only)   |
+| Comments / attachments                                             | ✅               | ✅              | ✅ (member of the project) |
+| Billing (checkout, subscription, history)                          | ✅               | ✅              | ❌                         |
+| Personal progress, notifications, profile                          | ✅               | ✅              | ✅                         |
 
 Plan limits are enforced in the service layer: FREE = 2 projects / 3 members, PRO = 15 / 15, BUSINESS = unlimited. The effective plan comes from the owner's active `Subscription`.
 
@@ -91,118 +91,118 @@ All routes are prefixed with `/api/v1`.
 
 ### Auth — `/auth`
 
-| Method | Path | Access |
-| --- | --- | --- |
-| POST | `/register` | public (OTP emailed) |
-| POST | `/verify-email` | public |
-| POST | `/resend-otp` | public (throttled) |
-| POST | `/login` | public |
-| POST | `/refresh` | refresh cookie/Bearer |
-| POST | `/logout` | any signed-in user |
-| GET | `/me` | any signed-in user |
+| Method | Path            | Access                |
+| ------ | --------------- | --------------------- |
+| POST   | `/register`     | public (OTP emailed)  |
+| POST   | `/verify-email` | public                |
+| POST   | `/resend-otp`   | public (throttled)    |
+| POST   | `/login`        | public                |
+| POST   | `/refresh`      | refresh cookie/Bearer |
+| POST   | `/logout`       | any signed-in user    |
+| GET    | `/me`           | any signed-in user    |
 
 ### Users — `/users`
 
-| Method | Path | Access |
-| --- | --- | --- |
-| GET | `/` | ADMIN (light list; `/admin/users` is canonical) |
-| GET · PATCH | `/me` | any signed-in user |
-| PATCH | `/me/password` | any signed-in user |
-| PATCH | `/me/avatar` | any signed-in user (multipart `avatar`) |
+| Method      | Path           | Access                                          |
+| ----------- | -------------- | ----------------------------------------------- |
+| GET         | `/`            | ADMIN (light list; `/admin/users` is canonical) |
+| GET · PATCH | `/me`          | any signed-in user                              |
+| PATCH       | `/me/password` | any signed-in user                              |
+| PATCH       | `/me/avatar`   | any signed-in user (multipart `avatar`)         |
 
 ### Projects — `/projects`
 
-| Method | Path | Access |
-| --- | --- | --- |
-| GET · POST | `/` | PROJECT_MANAGER, ADMIN (GET) |
-| GET · PATCH · DELETE | `/:id` | owner (DELETE also ADMIN) |
-| GET | `/:id/members` | owner, ADMIN, members |
-| DELETE | `/:id/members/:memberId` | owner |
-| POST · GET | `/:id/invitations` | owner |
-| POST | `/invitations/accept` · `/invitations/decline` | PROJECT_MANAGER, TEAM_MEMBER |
-| GET | `/invitations/mine` | any signed-in user |
+| Method               | Path                                           | Access                       |
+| -------------------- | ---------------------------------------------- | ---------------------------- |
+| GET · POST           | `/`                                            | PROJECT_MANAGER, ADMIN (GET) |
+| GET · PATCH · DELETE | `/:id`                                         | owner (DELETE also ADMIN)    |
+| GET                  | `/:id/members`                                 | owner, ADMIN, members        |
+| DELETE               | `/:id/members/:memberId`                       | owner                        |
+| POST · GET           | `/:id/invitations`                             | owner                        |
+| POST                 | `/invitations/accept` · `/invitations/decline` | PROJECT_MANAGER, TEAM_MEMBER |
+| GET                  | `/invitations/mine`                            | any signed-in user           |
 
 ### Tasks — `/tasks`
 
-| Method | Path | Access |
-| --- | --- | --- |
-| GET | `/?projectId=...` | members (TEAM_MEMBER sees only assigned) |
-| POST | `/` | PROJECT_MANAGER |
-| GET | `/board?projectId=...` | members |
-| GET | `/:id` | members |
-| PATCH | `/:id` | owner |
-| DELETE | `/:id` | owner, ADMIN |
-| PATCH | `/:id/status` | owner, assignee, PROJECT_MANAGER (ADMIN blocked) |
-| PATCH | `/:id/assign` | owner |
+| Method | Path                   | Access                                           |
+| ------ | ---------------------- | ------------------------------------------------ |
+| GET    | `/?projectId=...`      | members (TEAM_MEMBER sees only assigned)         |
+| POST   | `/`                    | PROJECT_MANAGER                                  |
+| GET    | `/board?projectId=...` | members                                          |
+| GET    | `/:id`                 | members                                          |
+| PATCH  | `/:id`                 | owner                                            |
+| DELETE | `/:id`                 | owner, ADMIN                                     |
+| PATCH  | `/:id/status`          | owner, assignee, PROJECT_MANAGER (ADMIN blocked) |
+| PATCH  | `/:id/assign`          | owner                                            |
 
 ### Comments — `/tasks`
 
-| Method | Path | Access |
-| --- | --- | --- |
-| GET · POST | `/:taskId/comments` | PROJECT_MANAGER, TEAM_MEMBER (POST) |
-| PATCH | `/comments/:commentId` | author |
-| DELETE | `/comments/:commentId` | PROJECT_MANAGER, ADMIN |
+| Method     | Path                   | Access                              |
+| ---------- | ---------------------- | ----------------------------------- |
+| GET · POST | `/:taskId/comments`    | PROJECT_MANAGER, TEAM_MEMBER (POST) |
+| PATCH      | `/comments/:commentId` | author                              |
+| DELETE     | `/comments/:commentId` | PROJECT_MANAGER, ADMIN              |
 
 ### Attachments — `/tasks`
 
-| Method | Path | Access |
-| --- | --- | --- |
-| POST | `/:taskId/attachments` (multipart `files`, max 5) | members, Pro/Business plan |
-| GET | `/:taskId/attachments` | members |
-| DELETE | `/attachments/:attachmentId` | PROJECT_MANAGER, TEAM_MEMBER |
+| Method | Path                                              | Access                       |
+| ------ | ------------------------------------------------- | ---------------------------- |
+| POST   | `/:taskId/attachments` (multipart `files`, max 5) | members, Pro/Business plan   |
+| GET    | `/:taskId/attachments`                            | members                      |
+| DELETE | `/attachments/:attachmentId`                      | PROJECT_MANAGER, TEAM_MEMBER |
 
 ### Notifications — `/notifications`
 
-| Method | Path | Access |
-| --- | --- | --- |
-| GET | `/?unreadOnly=true` | any signed-in user |
-| GET | `/unread-count` | any signed-in user |
-| PATCH | `/read-all` | any signed-in user |
-| PATCH | `/:id/read` | any signed-in user |
+| Method | Path                | Access             |
+| ------ | ------------------- | ------------------ |
+| GET    | `/?unreadOnly=true` | any signed-in user |
+| GET    | `/unread-count`     | any signed-in user |
+| PATCH  | `/read-all`         | any signed-in user |
+| PATCH  | `/:id/read`         | any signed-in user |
 
 ### Payments — `/payments`
 
-| Method | Path | Access |
-| --- | --- | --- |
-| GET | `/plans` | public pricing table |
-| POST | `/webhook` | Stripe signature (raw-body guard in `src/app.ts`) |
-| GET | `/subscription` | PROJECT_MANAGER |
-| POST | `/checkout` | PROJECT_MANAGER |
-| GET | `/verify?session_id=...` | PROJECT_MANAGER |
-| GET | `/history` | PROJECT_MANAGER |
-| GET | `/history/admin` | ADMIN |
+| Method | Path                     | Access                                            |
+| ------ | ------------------------ | ------------------------------------------------- |
+| GET    | `/plans`                 | public pricing table                              |
+| POST   | `/webhook`               | Stripe signature (raw-body guard in `src/app.ts`) |
+| GET    | `/subscription`          | PROJECT_MANAGER                                   |
+| POST   | `/checkout`              | PROJECT_MANAGER                                   |
+| GET    | `/verify?session_id=...` | PROJECT_MANAGER                                   |
+| GET    | `/history`               | PROJECT_MANAGER                                   |
+| GET    | `/history/admin`         | ADMIN                                             |
 
 ### Analytics — `/analytics`
 
-| Method | Path | Access | Returns |
-| --- | --- | --- | --- |
-| GET | `/admin` | ADMIN | totals (users, active projects, tasks, MRR), 12-month revenue and signups, tasks by status |
-| GET | `/manager` | PROJECT_MANAGER | completion rate, tasks/projects by status, member workload, 8-week overdue trend |
-| GET | `/project/:projectId` | PROJECT_MANAGER (owner only) | per-project variant of the manager charts |
-| GET | `/member` | TEAM_MEMBER | my tasks by status, completion rate, overdue count |
+| Method | Path                  | Access                       | Returns                                                                                    |
+| ------ | --------------------- | ---------------------------- | ------------------------------------------------------------------------------------------ |
+| GET    | `/admin`              | ADMIN                        | totals (users, active projects, tasks, MRR), 12-month revenue and signups, tasks by status |
+| GET    | `/manager`            | PROJECT_MANAGER              | completion rate, tasks/projects by status, member workload, 8-week overdue trend           |
+| GET    | `/project/:projectId` | PROJECT_MANAGER (owner only) | per-project variant of the manager charts                                                  |
+| GET    | `/member`             | TEAM_MEMBER                  | my tasks by status, completion rate, overdue count                                         |
 
 All chart payloads are flat arrays ready for Recharts.
 
 ### Admin — `/admin`
 
-| Method | Path | Access |
-| --- | --- | --- |
-| GET | `/users` | ADMIN (search, `role`, `user_status`, sort, pagination, project/task counters) |
-| PATCH | `/users/:id/status` | ADMIN (`ACTIVE`/`SUSPENDED`, blocks self and the seed admin) |
-| PATCH | `/users/:id/role` | ADMIN |
-| GET | `/projects` | ADMIN (platform-wide + `ownerName` search) |
-| DELETE | `/projects/:id` | ADMIN |
-| GET | `/payments` | ADMIN (status/plan filters) |
-| GET | `/reports` | ADMIN (paginated audit log with `action`/`entity` filters, platform totals, top projects) |
-| GET · PATCH | `/settings` | ADMIN (`maintenance_mode`, `registration_open`, `support_email`) |
+| Method      | Path                | Access                                                                                    |
+| ----------- | ------------------- | ----------------------------------------------------------------------------------------- |
+| GET         | `/users`            | ADMIN (search, `role`, `user_status`, sort, pagination, project/task counters)            |
+| PATCH       | `/users/:id/status` | ADMIN (`ACTIVE`/`SUSPENDED`, blocks self and the seed admin)                              |
+| PATCH       | `/users/:id/role`   | ADMIN                                                                                     |
+| GET         | `/projects`         | ADMIN (platform-wide + `ownerName` search)                                                |
+| DELETE      | `/projects/:id`     | ADMIN                                                                                     |
+| GET         | `/payments`         | ADMIN (status/plan filters)                                                               |
+| GET         | `/reports`          | ADMIN (paginated audit log with `action`/`entity` filters, platform totals, top projects) |
+| GET · PATCH | `/settings`         | ADMIN (`maintenance_mode`, `registration_open`, `support_email`)                          |
 
 ### Contact — `/contact`
 
-| Method | Path | Access |
-| --- | --- | --- |
-| POST | `/` | public (name, email, subject, message; also emails the support inbox, best-effort) |
-| GET | `/?status=NEW` | ADMIN |
-| PATCH | `/:id` | ADMIN (`NEW` / `READ` / `RESOLVED`) |
+| Method | Path           | Access                                                                             |
+| ------ | -------------- | ---------------------------------------------------------------------------------- |
+| POST   | `/`            | public (name, email, subject, message; also emails the support inbox, best-effort) |
+| GET    | `/?status=NEW` | ADMIN                                                                              |
+| PATCH  | `/:id`         | ADMIN (`NEW` / `READ` / `RESOLVED`)                                                |
 
 ### Health
 
@@ -223,63 +223,63 @@ npm run dev       # http://localhost:5000
 
 ### Collection variables
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `baseUrl` | `http://localhost:5000/api/v1` | every request URL is built from this |
-| `serverUrl` | `http://localhost:5000` | health check only |
-| `access_token` | *(empty)* | optional JWT for header auth — leave empty and rely on cookies |
-| `email`, `password`, `otp` | `tester@example.com` / `Password123` / `123456` | register/verify/login payloads |
-| `projectId`, `taskId`, `userId`, `commentId`, `attachmentId`, `notificationId`, `contactId`, `memberId`, `invitationToken`, `sessionId` | *(empty)* | fill these with real ids as responses return them |
+| Variable                                                                                                                                | Default                                         | Meaning                                                        |
+| --------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- | -------------------------------------------------------------- |
+| `baseUrl`                                                                                                                               | `http://localhost:5000/api/v1`                  | every request URL is built from this                           |
+| `serverUrl`                                                                                                                             | `http://localhost:5000`                         | health check only                                              |
+| `access_token`, `refresh_token`                                                             | _(empty)_                                       | filled automatically by Login on success; `access_token` is sent as `Authorization: Bearer ...` |
+| `email`, `password`, `otp`                                                                                                              | `tester@example.com` / `Password123` / `123456` | register/verify/login payloads                                 |
+| `projectId`, `taskId`, `userId`, `commentId`, `attachmentId`, `notificationId`, `contactId`, `memberId`, `invitationToken`, `sessionId` | _(empty)_                                       | fill these with real ids as responses return them              |
 
 ### Authentication in Postman
 
-Tokens are **HttpOnly cookies** (`access_token`, `refresh_token`) — they never appear in a response body.
+**Auth → Login** (in dev/test, i.e. `ENVIRONMENT !== "production"`) returns both tokens in the response body — `data.access_token` and `data.refresh_token` — *and* sets them as HttpOnly cookies (`access_token`, `refresh_token`). Verify Email and Refresh still set only cookies.
 
 1. Keep Postman's cookie jar enabled (it is on by default — **Settings → General → Cookie Jar**). After **Auth → Login** (or Verify Email / Refresh) the jar stores both cookies and every later request authenticates automatically.
-2. Header fallback: paste a JWT into the `access_token` collection variable and the collection-level pre-request script sends `Authorization: Bearer <token>` on every request. Clear the variable to go back to cookie-only.
-3. Validate the session with **Auth → Get Current User** — `200` means auth works, `400/401` means you are not signed in.
+2. **Token capture on login:** the Login request's script reads `data.access_token` / `data.refresh_token` from the body (falling back to the cookies) and stores them in collection variables — but **only** when the response is `success: true` with a login-success message; a failed login stores nothing. The collection pre-request script then attaches `Authorization: Bearer <access_token>` to every following request (the auth middleware accepts cookie or header), and `refresh_token` is available for testing `POST /auth/refresh`. You can also paste a JWT into `access_token` by hand at any time.
+3. Validate the session with **Auth → Get Current User** — `200` means auth works, `400/401` means you are not signed in. The Login request's Test Results tab shows `Login successful — access_token & refresh_token captured` when the hand-off worked.
 
 ### Test data
 
 **Seeded accounts** (from `npm run seed`, all verified):
 
-| Email | Password | Role | Use it for |
-| --- | --- | --- | --- |
-| `admin@taskflow.dev` | `Admin@123` | ADMIN | Admin folder, `/analytics/admin`, `/payments/history/admin`, `/users`, contact list |
-| `manager@taskflow.dev` | `Manager@123` | PROJECT_MANAGER | Projects, tasks, invitations, billing, `/analytics/manager` |
-| `member@taskflow.dev` | `Member@123` | TEAM_MEMBER | Comments, attachments, board moves, `/analytics/member` |
+| Email                  | Password      | Role            | Use it for                                                                          |
+| ---------------------- | ------------- | --------------- | ----------------------------------------------------------------------------------- |
+| `admin@taskflow.dev`   | `Admin@123`   | ADMIN           | Admin folder, `/analytics/admin`, `/payments/history/admin`, `/users`, contact list |
+| `manager@taskflow.dev` | `Manager@123` | PROJECT_MANAGER | Projects, tasks, invitations, billing, `/analytics/manager`                         |
+| `member@taskflow.dev`  | `Member@123`  | TEAM_MEMBER     | Comments, attachments, board moves, `/analytics/member`                             |
 
 Five extra members (`alex@`, `priya@`, `sam@`, `taylor@`, `noah@taskflow.dev`, password `Member@123`) populate the workload charts. To exercise registration instead, use any fresh email with a password of **8–24 chars containing at least one uppercase and one lowercase letter** (e.g. `Password123`), `role` = `PROJECT_MANAGER` or `TEAM_MEMBER` (ADMIN is not allowed), then take the 6-digit OTP from the email — with mail unconfigured, read it from the Redis OTP store — and call Verify Email.
 
 **Request bodies you will need (copy-paste ready):**
 
-| Request | Body |
-| --- | --- |
-| `POST /auth/login` | `{ "email": "manager@taskflow.dev", "password": "Manager@123" }` |
-| `POST /projects` | `{ "name": "Postman Smoke Test", "description": "created via collection", "status": "PLANNING", "start_date": "2026-10-15", "end_date": "2026-12-31" }` |
-| `POST /projects/:id/invitations` | `{ "email": "member@taskflow.dev" }` |
-| `POST /projects/invitations/accept` | `{ "token": "<token from the invitation email>" }` |
-| `POST /tasks` | `{ "projectId": "{{projectId}}", "title": "Smoke test task", "description": "via Postman", "priority": "HIGH", "due_date": "2026-10-30", "labels": ["qa"], "assigneeId": null }` |
-| `PATCH /tasks/:id/status` | `{ "status": "IN_PROGRESS" }` |
-| `PATCH /tasks/:id/assign` | `{ "assigneeId": "{{userId}}" }` (send `null` to unassign) |
-| `POST /tasks/:taskId/comments` | `{ "body": "Looks good to me!", "parent_id": null }` |
-| `POST /contact` | `{ "name": "Test User", "email": "tester@example.com", "subject": "Pricing question", "message": "Does the PRO plan include unlimited projects?" }` |
-| `POST /payments/checkout` | `{ "plan": "PRO" }` (test card `4242 4242 4242 4242`, future expiry, any CVC) |
-| `PATCH /admin/users/:id/status` | `{ "user_status": "SUSPENDED" }` |
-| `PATCH /admin/users/:id/role` | `{ "role": "TEAM_MEMBER" }` |
-| `PATCH /admin/settings` | `{ "maintenance_mode": false, "registration_open": true, "support_email": "support@taskflow.dev" }` |
+| Request                             | Body                                                                                                                                                                             |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /auth/login`                  | `{ "email": "manager@taskflow.dev", "password": "Manager@123" }`                                                                                                                 |
+| `POST /projects`                    | `{ "name": "Postman Smoke Test", "description": "created via collection", "status": "PLANNING", "start_date": "2026-10-15", "end_date": "2026-12-31" }`                          |
+| `POST /projects/:id/invitations`    | `{ "email": "member@taskflow.dev" }`                                                                                                                                             |
+| `POST /projects/invitations/accept` | `{ "token": "<token from the invitation email>" }`                                                                                                                               |
+| `POST /tasks`                       | `{ "projectId": "{{projectId}}", "title": "Smoke test task", "description": "via Postman", "priority": "HIGH", "due_date": "2026-10-30", "labels": ["qa"], "assigneeId": null }` |
+| `PATCH /tasks/:id/status`           | `{ "status": "IN_PROGRESS" }`                                                                                                                                                    |
+| `PATCH /tasks/:id/assign`           | `{ "assigneeId": "{{userId}}" }` (send `null` to unassign)                                                                                                                       |
+| `POST /tasks/:taskId/comments`      | `{ "body": "Looks good to me!", "parent_id": null }`                                                                                                                             |
+| `POST /contact`                     | `{ "name": "Test User", "email": "tester@example.com", "subject": "Pricing question", "message": "Does the PRO plan include unlimited projects?" }`                              |
+| `POST /payments/checkout`           | `{ "plan": "PRO" }` (test card `4242 4242 4242 4242`, future expiry, any CVC)                                                                                                    |
+| `PATCH /admin/users/:id/status`     | `{ "user_status": "SUSPENDED" }`                                                                                                                                                 |
+| `PATCH /admin/users/:id/role`       | `{ "role": "TEAM_MEMBER" }`                                                                                                                                                      |
+| `PATCH /admin/settings`             | `{ "maintenance_mode": false, "registration_open": true, "support_email": "support@taskflow.dev" }`                                                                              |
 
 **Allowed enum values** (zod rejects anything else):
 
-| Field | Values |
-| --- | --- |
-| `role` | `ADMIN`, `PROJECT_MANAGER`, `TEAM_MEMBER` (register accepts only the last two) |
-| `status` (project) | `PLANNING`, `ACTIVE`, `ON_HOLD`, `COMPLETED`, `ARCHIVED` |
-| `status` (task) | `TODO`, `IN_PROGRESS`, `IN_REVIEW`, `DONE` |
-| `priority` | `LOW`, `MEDIUM`, `HIGH`, `URGENT` |
-| `user_status` | `ACTIVE`, `SUSPENDED` |
-| `status` (contact) | `NEW`, `READ`, `RESOLVED` |
-| `plan` | `PRO`, `BUSINESS` for checkout (`FREE` is rejected) |
+| Field              | Values                                                                         |
+| ------------------ | ------------------------------------------------------------------------------ |
+| `role`             | `ADMIN`, `PROJECT_MANAGER`, `TEAM_MEMBER` (register accepts only the last two) |
+| `status` (project) | `PLANNING`, `ACTIVE`, `ON_HOLD`, `COMPLETED`, `ARCHIVED`                       |
+| `status` (task)    | `TODO`, `IN_PROGRESS`, `IN_REVIEW`, `DONE`                                     |
+| `priority`         | `LOW`, `MEDIUM`, `HIGH`, `URGENT`                                              |
+| `user_status`      | `ACTIVE`, `SUSPENDED`                                                          |
+| `status` (contact) | `NEW`, `READ`, `RESOLVED`                                                      |
+| `plan`             | `PRO`, `BUSINESS` for checkout (`FREE` is rejected)                            |
 
 ### Suggested run order
 

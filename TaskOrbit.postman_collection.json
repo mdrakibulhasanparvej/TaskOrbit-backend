@@ -1,7 +1,7 @@
 {
 	"info": {
 		"name": "TaskOrbit API",
-		"description": "Test collection for the TaskOrbit backend (Express + Prisma).\n\n**Setup**\n1. Start the server (`PORT=5000` from `.env`). Base URL variable: `{{baseUrl}}` = `http://localhost:5000/api/v1`.\n2. Auth tokens are issued as **HttpOnly cookies** (`access_token`, `refresh_token`) — never in the response body. Postman's cookie jar stores them automatically on Login / Verify-Email / Refresh, and sends them on every later request. Keep the cookie jar enabled.\n3. Fallback: if you need header auth (e.g. a JWT copied from a browser), set the collection variable `access_token` — a collection-level pre-request script then adds `Authorization: Bearer <token>` automatically. Leave it empty to rely on cookies.\n4. Flow: Register → Verify Email (OTP from mail/Redis) → Login → use the rest. Fill `{{projectId}}`, `{{taskId}}`, `{{commentId}}`, `{{userId}}`, `{{memberId}}`, `{{attachmentId}}`, `{{notificationId}}`, `{{contactId}}`, `{{invitationToken}}`, `{{sessionId}}` as you discover real IDs.\n\n**Roles**\n- `ADMIN` — seeded admin account (see `src/app/utils/seed.ts`).\n- `PROJECT_MANAGER` — creates projects/tasks, invites members.\n- `TEAM_MEMBER` — comments, attachments, status moves, invitations.\n- Any authenticated user can hit routes guarded by `auth()` with no role.\n\nA collection-level test asserts no 5xx on every request.",
+		"description": "Test collection for the TaskOrbit backend (Express + Prisma).\n\n**Setup**\n1. Start the server (`PORT=5000` from `.env`). Base URL variable: `{{baseUrl}}` = `http://localhost:5000/api/v1`.\n2. Auth tokens are issued as **HttpOnly cookies** (`access_token`, `refresh_token`) — never in the response body. Postman's cookie jar stores them automatically on Login / Verify-Email / Refresh, and sends them on every later request. Keep the cookie jar enabled.\n3. **Token capture on login:** outside production the Login response returns both tokens in the body as `data.access_token` / `data.refresh_token`. Its post-response script runs ONLY when the response is `success: true` with a login-success message, then writes both tokens into the collection variables `access_token` and `refresh_token`, and the collection-level pre-request script attaches `Authorization: Bearer <access_token>` to every following request. A failed login (`success: false`) stores nothing.\n4. Fallback: you can also paste a JWT into `access_token` by hand. Leave it empty before logging in to rely on cookies alone.\n5. Flow: Register → Verify Email (OTP from mail/Redis) → Login → use the rest. Fill `{{projectId}}`, `{{taskId}}`, `{{commentId}}`, `{{userId}}`, `{{memberId}}`, `{{attachmentId}}`, `{{notificationId}}`, `{{contactId}}`, `{{invitationToken}}`, `{{sessionId}}` as you discover real IDs.\n\n**Roles**\n- `ADMIN` — seeded admin account (see `src/app/utils/seed.ts`).\n- `PROJECT_MANAGER` — creates projects/tasks, invites members.\n- `TEAM_MEMBER` — comments, attachments, status moves, invitations.\n- Any authenticated user can hit routes guarded by `auth()` with no role.\n\nA collection-level test asserts no 5xx on every request.",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"event": [
@@ -39,6 +39,7 @@
 		{ "key": "baseUrl", "value": "http://localhost:5000/api/v1" },
 		{ "key": "serverUrl", "value": "http://localhost:5000" },
 		{ "key": "access_token", "value": "" },
+		{ "key": "refresh_token", "value": "" },
 		{ "key": "email", "value": "tester@example.com" },
 		{ "key": "password", "value": "Password123" },
 		{ "key": "otp", "value": "123456" },
@@ -153,7 +154,49 @@
 							"path": ["auth", "login"]
 						}
 					},
-					"description": "Public. Sets `access_token` (1d) and `refresh_token` (7d) as HttpOnly cookies — no token in the body. Postman stores them in its cookie jar; the collection test script also mirrors `access_token` into a variable.",
+					"description": "Public. On success (dev/test — `ENVIRONMENT !== \"production\"`) the response is `{ success: true, message: \"Login successful\", data: { user, access_token, refresh_token } }` — both tokens are returned in the body (and also set as HttpOnly cookies). The post-response script on this request fires ONLY when `success === true` and the message is the login-success one: it stores `data.access_token` / `data.refresh_token` into the collection variables (falling back to the cookies), and the collection pre-request script sends `Authorization: Bearer <access_token>` on every following request. On a failed login (`success: false`) no token is written.",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"// Capture tokens ONLY when the login actually succeeded.",
+									"const body = pm.response.json();",
+									"const succeeded = Boolean(",
+									"\tbody &&",
+									"\tbody.success === true &&",
+									"\t/login\\s*success/i.test(String(body.message || ''))",
+									");",
+									"",
+									"if (succeeded) {",
+									"\t// primary source: the response body; fallback: the session cookie",
+									"\tconst readCookie = (name) => {",
+									"\t\ttry {",
+									"\t\t\tconst c = pm.cookies.get(name);",
+									"\t\t\tif (!c) return null;",
+									"\t\t\treturn typeof c === 'object' && c.value ? c.value : c;",
+									"\t\t} catch (e) { return null; }",
+									"\t};",
+									"",
+									"\tconst data = body.data || {};",
+									"\tconst access = data.access_token || readCookie('access_token');",
+									"\tconst refresh = data.refresh_token || readCookie('refresh_token');",
+									"",
+									"\tif (access) pm.collectionVariables.set('access_token', access);",
+									"\tif (refresh) pm.collectionVariables.set('refresh_token', refresh);",
+									"",
+									"\tpm.test('Login successful — access_token & refresh_token captured', function () {",
+									"\t\tpm.expect(pm.collectionVariables.get('access_token') || '').to.not.equal('');",
+									"\t\tpm.expect(pm.collectionVariables.get('refresh_token') || '').to.not.equal('');",
+									"\t});",
+									"} else {",
+									"\tconsole.log('Login not successful — no token stored. Response:', body && body.message);",
+									"}"
+								]
+							}
+						}
+					],
 					"response": []
 				},
 				{
