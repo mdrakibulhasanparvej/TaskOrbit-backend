@@ -91,26 +91,61 @@ const resendOtp = catchAsync(async (req, res) => {
 	});
 });
 
+/**
+ * Dev/test only: also expose the session tokens in the response body so API
+ * clients (Postman, scripts) can pick them up without reading the cookie jar.
+ * Production keeps the cookie-only contract — HttpOnly cookies stay set in
+ * every environment either way.
+ */
+const includeTokensInBody = () => config.environment !== "production";
+
 const login = catchAsync(async (req, res) => {
 	const result = await AuthService.login(req.body);
 
 	setSessionCookies(res, result);
 
-	// Dev/test only: also expose the session tokens in the body so API clients
-	// (Postman, scripts) can pick them up without reading the cookie jar.
-	// Production keeps the cookie-only contract — HttpOnly cookies stay set in
-	// every environment either way.
-	const includeTokensInBody = config.environment !== "production";
-
 	sendResponse(res, {
 		message: "Login successful",
 		data: {
 			user: result.user,
-			...(includeTokensInBody && {
+			...(includeTokensInBody() && {
 				access_token: result.access_token,
 				refresh_token: result.refresh_token,
 			}),
 		},
+	});
+});
+
+const googleLogin = catchAsync(async (req, res) => {
+	const result = await AuthService.googleLogin(req.body);
+
+	setSessionCookies(res, result);
+
+	sendResponse(res, {
+		message: "Google login successful",
+		data: {
+			user: result.user,
+			...(includeTokensInBody() && {
+				access_token: result.access_token,
+				refresh_token: result.refresh_token,
+			}),
+		},
+	});
+});
+
+const forgotPassword = catchAsync(async (req, res) => {
+	await AuthService.forgotPassword(req.body);
+
+	sendResponse(res, {
+		message: "Password reset OTP has been sent to your email",
+	});
+});
+
+const resetPassword = catchAsync(async (req, res) => {
+	await AuthService.resetPassword(req.body);
+
+	sendResponse(res, {
+		message: "Password reset successful. please login with your new password",
 	});
 });
 
@@ -164,6 +199,9 @@ export const AuthController = {
 	verifyEmail,
 	resendOtp,
 	login,
+	googleLogin,
+	forgotPassword,
+	resetPassword,
 	refreshSession,
 	logout,
 	getMe,

@@ -17,6 +17,9 @@ model User {
   is_deleted  Boolean @default(false)
   is_verified Boolean @default(false)
 
+  need_password_change Boolean @default(false)
+  deleted_at           DateTime?
+
   last_login_at DateTime?
 
   owned_projects      Project[]

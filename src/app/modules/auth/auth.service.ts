@@ -4,6 +4,7 @@ import ejs from "ejs";
 import status from "http-status";
 import type { Role } from "../../../../generated/prisma/enums";
 import config from "../../config";
+import googleClient from "../../lib/googleAuth";
 import transporter, { brandLogoAttachment } from "../../lib/nodeMailer";
 import { prisma } from "../../lib/prisma";
 import redisClient from "../../lib/redis";
@@ -14,9 +15,12 @@ import { signToken, verifyToken } from "../../utils/jwt.js";
 import { getPlatformSettings } from "../../utils/platformSettings";
 import { verifyOtp } from "../../utils/verifyOtp";
 import type {
+	TForgotPasswordPayload,
+	TGoogleLoginPayload,
 	TLoginPayload,
 	TRegisterPayload,
 	TResendOtpPayload,
+	TResetPasswordPayload,
 	TVerifyOtpPayload,
 } from "./auth.schema";
 
@@ -26,6 +30,9 @@ const EXPIRATION_MINUTES = 5;
 
 const otpRedisKey = (email: string) => `verify-email-otp:${email}`;
 const resendRedisKey = (email: string) => `otp-resend-cooldown:${email}`;
+const forgotPasswordRedisKey = (email: string) => `forgot-password-otp:${email}`;
+const forgotPasswordCooldownKey = (email: string) =>
+	`forgot-password-cooldown:${email}`;
 
 const buildJwtPayload = (user: {
 	id: string;
@@ -349,6 +356,7 @@ const login = async (payload: TLoginPayload) => {
 			email: user.email,
 			role: user.role,
 			avatar_url: user.avatar_url,
+			need_password_change: user.need_password_change,
 		},
 	};
 };
@@ -417,6 +425,301 @@ const refreshSession = async (refreshToken: string | undefined) => {
 			email: user.email,
 			role: user.role,
 			avatar_url: user.avatar_url,
+			need_password_change: user.need_password_change,
+		},
+	};
+};
+
+/**
+ * Password reset step 1 — emails a 6-digit OTP (5 min TTL, 1 min resend
+ * cooldown). Google-only accounts are rejected: their password is managed by
+ * Google. In development the OTP is also printed to the server console.
+ */
+const forgotPassword = async (payload: TForgotPasswordPayload) => {
+	const email = payload.email.trim().toLowerCase();
+
+	const user = await prisma.user.findUnique({ where: { email } });
+
+	if (!user || user.is_deleted) {
+		throw new AppError(status.NOT_FOUND, "No account found for this email");
+	}
+
+	if (user.user_status === "SUSPENDED") {
+		throw new AppError(
+			status.FORBIDDEN,
+			"Your account is suspended. please contact support",
+		);
+	}
+
+	if (!user.is_verified) {
+		throw new AppError(
+			status.BAD_REQUEST,
+			"Your account is not verified. please verify your email first",
+		);
+	}
+
+	if (user.provider === "GOOGLE" || !user.password) {
+		throw new AppError(
+			status.FORBIDDEN,
+			"This account signs in with Google. please use Google login",
+		);
+	}
+
+	const isOnCooldown = await redisClient.get(forgotPasswordCooldownKey(email));
+
+	if (isOnCooldown) {
+		throw new AppError(
+			status.TOO_MANY_REQUESTS,
+			"Please wait a minute before requesting another code",
+		);
+	}
+
+	const otpValue = crypto.randomInt(100000, 1000000).toString();
+
+	if (config.environment === "development") {
+		console.log(`[DEV]: Password reset otp log -> ${otpValue}`);
+	}
+
+	await redisClient.set(forgotPasswordRedisKey(email), otpValue, {
+		expiration: {
+			type: "EX",
+			value: OTP_TTL_SECONDS,
+		},
+	});
+
+	await redisClient.set(forgotPasswordCooldownKey(email), "1", {
+		expiration: {
+			type: "EX",
+			value: RESEND_COOLDOWN_SECONDS,
+		},
+	});
+
+	const filePath = path.join(
+		process.cwd(),
+		"/src/app/templates/forgot-password-otp.ejs",
+	);
+	const html = await ejs.renderFile(filePath, {
+		name: user.name,
+		email,
+		otp: otpValue,
+		expirationMinutes: EXPIRATION_MINUTES,
+	});
+
+	try {
+		await transporter.sendMail({
+			from: config.email_sender,
+			to: email,
+			subject: "Your password reset code for TaskFlow",
+			html,
+			attachments: [brandLogoAttachment],
+		});
+	} catch (error) {
+		console.log("Password reset email could not be sent", error);
+
+		// without SMTP credentials the OTP stays available on the dev console
+		if (config.environment !== "development") {
+			throw new AppError(
+				status.BAD_GATEWAY,
+				"Password reset email could not be sent. please try again later",
+			);
+		}
+	}
+};
+
+/**
+ * Password reset step 2 — verifies the OTP (single use, deletes it), hashes
+ * the new password and revokes the tracked refresh token so any stolen
+ * session dies with the old password.
+ */
+const resetPassword = async (payload: TResetPasswordPayload) => {
+	const email = payload.email.trim().toLowerCase();
+
+	const user = await prisma.user.findUnique({ where: { email } });
+
+	if (!user || user.is_deleted) {
+		throw new AppError(status.NOT_FOUND, "No account found for this email");
+	}
+
+	if (user.user_status === "SUSPENDED") {
+		throw new AppError(
+			status.FORBIDDEN,
+			"Your account is suspended. please contact support",
+		);
+	}
+
+	if (!user.is_verified) {
+		throw new AppError(
+			status.BAD_REQUEST,
+			"Your account is not verified. please verify your email first",
+		);
+	}
+
+	if (user.provider === "GOOGLE" || !user.password) {
+		throw new AppError(
+			status.FORBIDDEN,
+			"This account signs in with Google. please use Google login",
+		);
+	}
+
+	await verifyOtp({
+		otp: Number(payload.otp),
+		otpKey: forgotPasswordRedisKey(email),
+	});
+
+	const hashedPassword = await hashPassword(payload.new_password);
+
+	await prisma.user.update({
+		where: { id: user.id },
+		// the flag forces a proper password change through the signed-in
+		// change-password flow (cleared by PATCH /users/me/password)
+		data: { password: hashedPassword, need_password_change: true },
+	});
+
+	// any active session was issued for the old password — kill it
+	await revokeSession(user.id);
+
+	const filePath = path.join(
+		process.cwd(),
+		"/src/app/templates/password-reset-success.ejs",
+	);
+	const html = await ejs.renderFile(filePath, { name: user.name });
+
+	try {
+		await transporter.sendMail({
+			from: config.email_sender,
+			to: email,
+			subject: "Your TaskFlow password was changed",
+			html,
+			attachments: [brandLogoAttachment],
+		});
+	} catch (error) {
+		// best-effort: the password is already changed at this point
+		console.log("Password reset confirmation email could not be sent", error);
+	}
+};
+
+/**
+ * Google OAuth sign-in: the client sends a Google ID token (from
+ * accounts.google.com / gapi), the server verifies it against GOOGLE_CLIENT_ID
+ * and then either signs the user in, links Google to an existing credentials
+ * account with the same (Google-verified) email, or creates a brand new
+ * TEAM_MEMBER account. No OTP or password involved.
+ */
+const googleLogin = async (payload: TGoogleLoginPayload) => {
+	if (!config.google_client_id) {
+		throw new AppError(
+			status.INTERNAL_SERVER_ERROR,
+			"Google login is not configured on this server",
+		);
+	}
+
+	let idTokenPayload:
+		| { email?: string; sub?: string; name?: string; picture?: string }
+		| undefined;
+
+	try {
+		const ticket = await googleClient.verifyIdToken({
+			idToken: payload.id_token,
+			audience: config.google_client_id,
+		});
+
+		idTokenPayload = ticket.getPayload();
+	} catch {
+		throw new AppError(
+			status.UNAUTHORIZED,
+			"Google login failed. the ID token is invalid or expired",
+		);
+	}
+
+	if (!idTokenPayload?.email || !idTokenPayload.sub) {
+		throw new AppError(
+			status.UNAUTHORIZED,
+			"Google ID token is missing the email claim",
+		);
+	}
+
+	const email = idTokenPayload.email.trim().toLowerCase();
+
+	const existingUser = await prisma.user.findUnique({ where: { email } });
+
+	let user = existingUser;
+
+	if (existingUser) {
+		if (existingUser.is_deleted) {
+			throw new AppError(status.NOT_FOUND, "No account found.");
+		}
+
+		if (existingUser.user_status === "SUSPENDED") {
+			throw new AppError(
+				status.FORBIDDEN,
+				"Your account is suspended. please contact support",
+			);
+		}
+
+		if (!existingUser.is_active) {
+			throw new AppError(status.BAD_REQUEST, "Your account is inactive.");
+		}
+
+		if (existingUser.provider === "GOOGLE") {
+			// same Google account (or a re-linked one) → keep the profile in sync
+			user =
+				existingUser.google_id === idTokenPayload.sub
+					? existingUser
+					: await prisma.user.update({
+							where: { id: existingUser.id },
+							data: {
+								google_id: idTokenPayload.sub,
+								avatar_url: existingUser.avatar_url ?? idTokenPayload.picture ?? null,
+							},
+						});
+		} else {
+			// credentials account → link it to Google; the email is Google-verified
+			user = await prisma.user.update({
+				where: { id: existingUser.id },
+				data: {
+					google_id: idTokenPayload.sub,
+					provider: "GOOGLE",
+					is_verified: true,
+					avatar_url: existingUser.avatar_url ?? idTokenPayload.picture ?? null,
+				},
+			});
+		}
+	} else {
+		user = await prisma.user.create({
+			data: {
+				name: idTokenPayload.name || email.split("@")[0] || email,
+				email,
+				password: null,
+				role: "TEAM_MEMBER",
+				provider: "GOOGLE",
+				google_id: idTokenPayload.sub,
+				avatar_url: idTokenPayload.picture ?? null,
+				is_verified: true,
+			},
+		});
+	}
+
+	if (!user) {
+		throw new AppError(
+			status.INTERNAL_SERVER_ERROR,
+			"Google login failed. please try again",
+		);
+	}
+
+	await prisma.user.update({
+		where: { id: user.id },
+		data: { last_login_at: new Date() },
+	});
+
+	return {
+		...(await buildSessionTokens(user)),
+		user: {
+			id: user.id,
+			name: user.name,
+			email: user.email,
+			role: user.role,
+			avatar_url: user.avatar_url,
+			need_password_change: user.need_password_change,
 		},
 	};
 };
@@ -439,6 +742,9 @@ export const AuthService = {
 	verifyEmail,
 	resendOtp,
 	login,
+	googleLogin,
+	forgotPassword,
+	resetPassword,
 	refreshSession,
 	revokeSession,
 	getMe,

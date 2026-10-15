@@ -43,6 +43,7 @@
 		{ "key": "email", "value": "tester@example.com" },
 		{ "key": "password", "value": "Password123" },
 		{ "key": "otp", "value": "123456" },
+		{ "key": "google_id_token", "value": "" },
 		{ "key": "userId", "value": "" },
 		{ "key": "projectId", "value": "" },
 		{ "key": "taskId", "value": "" },
@@ -154,7 +155,7 @@
 							"path": ["auth", "login"]
 						}
 					},
-					"description": "Public. On success (dev/test — `ENVIRONMENT !== \"production\"`) the response is `{ success: true, message: \"Login successful\", data: { user, access_token, refresh_token } }` — both tokens are returned in the body (and also set as HttpOnly cookies). The post-response script on this request fires ONLY when `success === true` and the message is the login-success one: it stores `data.access_token` / `data.refresh_token` into the collection variables (falling back to the cookies), and the collection pre-request script sends `Authorization: Bearer <access_token>` on every following request. On a failed login (`success: false`) no token is written.",
+					"description": "Public. On success (dev/test — `ENVIRONMENT !== \"production\"`) the response is `{ success: true, message: \"Login successful\", data: { user, access_token, refresh_token } }` — both tokens are returned in the body (and also set as HttpOnly cookies). The `user` object also carries `need_password_change` (true after a reset-password until `PATCH /users/me/password` clears it). The post-response script on this request fires ONLY when `success === true` and the message is the login-success one: it stores `data.access_token` / `data.refresh_token` into the collection variables (falling back to the cookies), and the collection pre-request script sends `Authorization: Bearer <access_token>` on every following request. On a failed login (`success: false`) no token is written.",
 					"event": [
 						{
 							"listen": "test",
@@ -197,6 +198,66 @@
 							}
 						}
 					],
+					"response": []
+				},
+				{
+					"name": "Google Login",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"id_token\": \"{{google_id_token}}\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/auth/google",
+							"host": ["{{baseUrl}}"],
+							"path": ["auth", "google"]
+						}
+					},
+					"description": "Public. Body: `{ \"id_token\": \"<Google ID token>\" }` — the token from a Google sign-in (gapi / GoogleIdentityServices), verified against `GOOGLE_CLIENT_ID` in `.env` (500 \"not configured\" until it is set). Signs in an existing account with the same email, links Google to a credentials account, or creates a new TEAM_MEMBER. Response mirrors Login: `{ success, message: \"Google login successful\", data: { user, access_token, refresh_token } }` in dev.",
+					"response": []
+				},
+				{
+					"name": "Forgot Password",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{email}}\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/auth/forgot-password",
+							"host": ["{{baseUrl}}"],
+							"path": ["auth", "forgot-password"]
+						}
+					},
+					"description": "Public. Sends a 6-digit reset OTP (5-min TTL, 1-min resend cooldown). In development the OTP is also printed to the server console as `[DEV]: Password reset otp log -> 123456`. Errors: 404 unknown email, 400 unverified account, 403 suspended or Google-only account, 429 cooldown.",
+					"response": []
+				},
+				{
+					"name": "Reset Password",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{email}}\",\n  \"otp\": \"{{otp}}\",\n  \"new_password\": \"NewPassword123\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/auth/reset-password",
+							"host": ["{{baseUrl}}"],
+							"path": ["auth", "reset-password"]
+						}
+					},
+					"description": "Public. `otp` is the single-use code from Forgot Password (6 digits, 5-min TTL). On success the password is re-hashed, every active session is revoked and a confirmation email is sent. Errors: 400 invalid/expired OTP, 403 Google-only account.",
 					"response": []
 				},
 				{

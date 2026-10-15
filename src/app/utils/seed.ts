@@ -185,6 +185,8 @@ const seedAccounts = async () => {
 				user_status: UserStatus.ACTIVE,
 				is_active: true,
 				is_verified: true,
+				// a fresh seed run also lifts any forced-password-change flag
+				need_password_change: false,
 			},
 			create: {
 				id: demo.id,
@@ -196,6 +198,7 @@ const seedAccounts = async () => {
 				user_status: UserStatus.ACTIVE,
 				is_active: true,
 				is_verified: true,
+				need_password_change: false,
 			},
 		});
 	}

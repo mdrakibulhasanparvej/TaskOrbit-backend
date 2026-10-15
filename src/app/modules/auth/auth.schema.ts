@@ -31,7 +31,26 @@ export const loginSchema = z.object({
 	password: passwordField,
 });
 
+export const googleLoginSchema = z.object({
+	id_token: z
+		.string("id_token is required")
+		.min(1, "Google ID token is required"),
+});
+
+export const forgotPasswordSchema = z.object({
+	email: z.email("Invalid email format"),
+});
+
+export const resetPasswordSchema = z.object({
+	email: z.email("Invalid email format"),
+	otp: z.string("OTP is required").length(6, "OTP must be 6 digits"),
+	new_password: passwordField,
+});
+
 export type TRegisterPayload = z.infer<typeof registerSchema>;
 export type TVerifyOtpPayload = z.infer<typeof verifyOtpSchema>;
 export type TResendOtpPayload = z.infer<typeof resendOtpSchema>;
 export type TLoginPayload = z.infer<typeof loginSchema>;
+export type TGoogleLoginPayload = z.infer<typeof googleLoginSchema>;
+export type TForgotPasswordPayload = z.infer<typeof forgotPasswordSchema>;
+export type TResetPasswordPayload = z.infer<typeof resetPasswordSchema>;

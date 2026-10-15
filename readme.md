@@ -35,6 +35,7 @@ Create `.env` in the project root (never commit it):
 | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | avatars, attachments |                                                             |
 | `REDIS_USERNAME`, `REDIS_PASSWORD`, `REDIS_HOST`, `REDIS_PORT`         | redis lib            | OTP throttling, refresh-token tracking, notification dedupe |
 | `EMAIL_SENDER`, `GOOGLE_APP_PASSWORD`                                  | nodemailer           | Gmail app password for OTP, invitations, receipts           |
+| `GOOGLE_CLIENT_ID`                                                     | google oauth         | OAuth client id for `POST /api/v1/auth/google` (500 until set) |
 | `ADMIN_NAME`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`                          | seed                 | env-configured admin created at boot                        |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`                           | payments             | test-mode `sk_test_...` / `whsec_...`                       |
 
@@ -66,7 +67,7 @@ npm run seed
 
 ## Authentication Model
 
-Auth is **cookie-first**: `login`, `verify-email` and `refresh` set two HttpOnly cookies — `access_token` (1d) and `refresh_token` (7d, rotated on every refresh). Outside production (`ENVIRONMENT !== "production"` — i.e. dev/test), the **login** response additionally returns both tokens in the body so non-browser clients (Postman, scripts) can pick them up directly: `{ success, message: "Login successful", data: { user, access_token, refresh_token } }`. `verify-email` and `refresh` stay body-free: `{ success, message, data: { user } }`.
+Auth is **cookie-first**: `login`, `verify-email` and `refresh` set two HttpOnly cookies — `access_token` (1d) and `refresh_token` (7d, rotated on every refresh). Outside production (`ENVIRONMENT !== "production"` — i.e. dev/test), the **login** response additionally returns both tokens in the body so non-browser clients (Postman, scripts) can pick them up directly: `{ success, message: "Login successful", data: { user, access_token, refresh_token } }`. The `user` object carries `need_password_change` — set by `reset-password`, cleared by `PATCH /users/me/password`. `verify-email` and `refresh` stay body-free: `{ success, message, data: { user } }`.
 
 - `auth(...roles)` resolves credentials as `access_token` cookie → `refresh_token` cookie → optional `Authorization: Bearer` header (either secret).
 - After the token it loads the user and checks `is_deleted` / `user_status` / `is_active` / `is_verified`, then the role allow-list. Role-layer mismatches answer **401**; ownership and plan checks inside services answer **403**.
@@ -97,6 +98,9 @@ All routes are prefixed with `/api/v1`.
 | POST   | `/verify-email` | public                |
 | POST   | `/resend-otp`   | public (throttled)    |
 | POST   | `/login`        | public                |
+| POST   | `/google`       | public (Google ID token; needs `GOOGLE_CLIENT_ID`) |
+| POST   | `/forgot-password` | public (reset OTP emailed, 5-min TTL) |
+| POST   | `/reset-password`  | public (OTP + new password, revokes sessions) |
 | POST   | `/refresh`      | refresh cookie/Bearer |
 | POST   | `/logout`       | any signed-in user    |
 | GET    | `/me`           | any signed-in user    |
@@ -256,6 +260,9 @@ Five extra members (`alex@`, `priya@`, `sam@`, `taylor@`, `noah@taskflow.dev`, p
 | Request                             | Body                                                                                                                                                                             |
 | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `POST /auth/login`                  | `{ "email": "manager@taskflow.dev", "password": "Manager@123" }`                                                                                                                 |
+| `POST /auth/forgot-password`        | `{ "email": "member@taskflow.dev" }` — in dev the OTP is printed to the server console as `[DEV]: Password reset otp log -> 123456`                                              |
+| `POST /auth/reset-password`         | `{ "email": "member@taskflow.dev", "otp": "<code from the console>", "new_password": "NewPassword123" }`                                                                          |
+| `POST /auth/google`                 | `{ "id_token": "<Google ID token>" }` — requires `GOOGLE_CLIENT_ID` in `.env`                                                                                                     |
 | `POST /projects`                    | `{ "name": "Postman Smoke Test", "description": "created via collection", "status": "PLANNING", "start_date": "2026-10-15", "end_date": "2026-12-31" }`                          |
 | `POST /projects/:id/invitations`    | `{ "email": "member@taskflow.dev" }`                                                                                                                                             |
 | `POST /projects/invitations/accept` | `{ "token": "<token from the invitation email>" }`                                                                                                                               |

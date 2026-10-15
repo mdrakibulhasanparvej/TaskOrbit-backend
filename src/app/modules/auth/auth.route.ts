@@ -3,9 +3,12 @@ import auth from "../../middlewares/auth";
 import validateRequest from "../../middlewares/validateRequest";
 import { AuthController } from "./auth.controller";
 import {
+	forgotPasswordSchema,
+	googleLoginSchema,
 	loginSchema,
 	registerSchema,
 	resendOtpSchema,
+	resetPasswordSchema,
 	verifyOtpSchema,
 } from "./auth.schema";
 
@@ -30,6 +33,24 @@ router.post(
 );
 
 router.post("/login", validateRequest(loginSchema), AuthController.login);
+
+router.post(
+	"/google",
+	validateRequest(googleLoginSchema),
+	AuthController.googleLogin,
+);
+
+router.post(
+	"/forgot-password",
+	validateRequest(forgotPasswordSchema),
+	AuthController.forgotPassword,
+);
+
+router.post(
+	"/reset-password",
+	validateRequest(resetPasswordSchema),
+	AuthController.resetPassword,
+);
 
 // refresh needs no auth() guard — the access token may already be expired
 router.post("/refresh", AuthController.refreshSession);

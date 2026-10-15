@@ -36,6 +36,9 @@ export default {
 	email_sender: env.EMAIL_SENDER!,
 	google_app_password: env.GOOGLE_APP_PASSWORD!,
 
+	// google oauth (ID token audience for POST /api/v1/auth/google)
+	google_client_id: env.GOOGLE_CLIENT_ID,
+
 	// platform admin credentials
 	admin_name: env.ADMIN_NAME!,
 	admin_email: env.ADMIN_EMAIL!,

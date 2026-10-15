@@ -170,7 +170,9 @@ const changePassword = async (
 
 	await prisma.user.update({
 		where: { id: user.id },
-		data: { password: hashedPassword },
+		// a deliberate password change also lifts the forced-change flag that
+		// reset-password may have set
+		data: { password: hashedPassword, need_password_change: false },
 	});
 
 	return true;
