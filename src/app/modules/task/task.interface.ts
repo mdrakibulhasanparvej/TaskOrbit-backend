@@ -8,7 +8,12 @@ import type { IQuery } from "../../types";
 import type { createTaskSchema, updateTaskSchema } from "./task.schema";
 
 export interface ITaskQuery extends IQuery {
-	projectId: string;
+	/**
+	 * Optional. When present the list is scoped to that project (membership
+	 * enforced); when omitted, `getTasks` returns the caller's own assignments
+	 * across every project they can access.
+	 */
+	projectId?: string;
 	status?: TaskStatus;
 	priority?: TaskPriority;
 	assigneeId?: string;

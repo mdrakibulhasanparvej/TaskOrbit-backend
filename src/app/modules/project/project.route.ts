@@ -31,7 +31,7 @@ router.get("/invitations/mine", auth(), ProjectController.getMyInvitations);
 
 router.get(
 	"/",
-	auth(Role.PROJECT_MANAGER, Role.ADMIN),
+	auth(Role.PROJECT_MANAGER, Role.ADMIN, Role.TEAM_MEMBER),
 	ProjectController.getMyProjects,
 );
 

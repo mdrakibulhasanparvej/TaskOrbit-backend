@@ -58,6 +58,7 @@ const taskListSelect = {
 	created_at: true,
 	updated_at: true,
 	assignee: { select: userBriefSelect },
+	project: { select: { id: true, name: true, status: true } },
 	_count: { select: { comments: true } },
 } satisfies Prisma.TaskSelect;
 
@@ -161,14 +162,19 @@ interface ITaskScope {
 	seesAll: boolean;
 }
 
+type TTaskScopeMode = "read" | "write";
+
 /**
- * ADMIN and the project owner see every task of the project, a PROJECT_MANAGER
- * member sees every task of projects they belong to, and a TEAM_MEMBER is
+ * ADMIN and the project owner see every task of the project and a
+ * PROJECT_MANAGER member sees every task of projects they belong to. On read
+ * operations any project member (including a TEAM_MEMBER) sees every task of
+ * the project, while on write/mutation operations a TEAM_MEMBER stays
  * restricted to the tasks assigned to them.
  */
 const resolveTaskScope = async (
 	projectId: string,
 	user: Express.User,
+	mode: TTaskScopeMode = "read",
 ): Promise<ITaskScope> => {
 	const project = await findProjectOrThrow(projectId);
 
@@ -187,7 +193,12 @@ const resolveTaskScope = async (
 		);
 	}
 
-	return { project, seesAll: user.role === "PROJECT_MANAGER" };
+	// Every project member may VIEW the whole board/list; mutation is still
+	// gated separately (moveTask/updateTask), so write mode keeps the old rule.
+	return {
+		project,
+		seesAll: mode === "read" || user.role === "PROJECT_MANAGER",
+	};
 };
 
 /** Every task mutation (except ADMIN delete) belongs to the project owner. */
@@ -335,15 +346,6 @@ const getTasks = async (query: ITaskQuery, user: Express.User) => {
 	const projectId =
 		typeof query.projectId === "string" ? query.projectId.trim() : "";
 
-	if (!projectId) {
-		throw new AppError(
-			status.BAD_REQUEST,
-			"projectId query parameter is required",
-		);
-	}
-
-	const { seesAll } = await resolveTaskScope(projectId, user);
-
 	const page = Math.max(Number(query.page) || 1, 1);
 	const limit = Math.max(Number(query.limit) || 10, 1);
 	const skip = (page - 1) * limit;
@@ -364,7 +366,34 @@ const getTasks = async (query: ITaskQuery, user: Express.User) => {
 	const dueBefore =
 		typeof query.dueBefore === "string" ? query.dueBefore.trim() : "";
 
-	const andConditions: Prisma.TaskWhereInput[] = [{ project_id: projectId }];
+	const andConditions: Prisma.TaskWhereInput[] = [];
+
+	// With a projectId this is a scoped project list; without one it is the
+	// authenticated user's cross-project "my tasks" view.
+	if (projectId) {
+		const { seesAll } = await resolveTaskScope(projectId, user);
+
+		andConditions.push({ project_id: projectId });
+
+		// a TEAM_MEMBER only ever lists the tasks assigned to them
+		if (!seesAll) {
+			andConditions.push({ assignee_id: user.id });
+		} else if (assigneeFilter) {
+			andConditions.push({ assignee_id: assigneeFilter });
+		}
+	} else {
+		// Cross-project view: strictly the caller's own assignments, and only
+		// inside projects they can still access (owner or active member).
+		andConditions.push({ assignee_id: user.id });
+		andConditions.push({
+			project: {
+				OR: [
+					{ owner_id: user.id },
+					{ members: { some: { user_id: user.id } } },
+				],
+			},
+		});
+	}
 
 	if (search) {
 		andConditions.push({
@@ -405,13 +434,6 @@ const getTasks = async (query: ITaskQuery, user: Express.User) => {
 		andConditions.push({ due_date: { lte: dueBeforeDate } });
 	}
 
-	// a TEAM_MEMBER only ever lists the tasks assigned to them
-	if (!seesAll) {
-		andConditions.push({ assignee_id: user.id });
-	} else if (assigneeFilter) {
-		andConditions.push({ assignee_id: assigneeFilter });
-	}
-
 	const where: Prisma.TaskWhereInput = { AND: andConditions };
 
 	const [tasks, total] = await Promise.all([
@@ -420,7 +442,9 @@ const getTasks = async (query: ITaskQuery, user: Express.User) => {
 			select: taskListSelect,
 			orderBy: sortField
 				? [{ [sortField]: sortOrder }]
-				: [{ position: "asc" }, { created_at: "desc" }],
+				: projectId
+					? [{ position: "asc" }, { created_at: "desc" }]
+					: [{ created_at: "desc" }],
 			skip,
 			take: limit,
 		}),
@@ -491,9 +515,23 @@ const updateTask = async (
 	const task = await findTaskOrThrow(taskId);
 	const project = await findProjectOrThrow(task.project_id);
 
-	assertProjectOwner(project, user);
+	const isProjectOwner = project.owner_id === user.id;
+	const isAdmin = user.role === "ADMIN";
+	const isAssignee = task.assignee_id === user.id;
+	const isTeamMember = user.role === "TEAM_MEMBER";
 
-	if (payload.assigneeId) {
+	if (!isProjectOwner && !isAdmin) {
+		// A TEAM_MEMBER may edit only the task assigned to them.
+		if (!(isTeamMember && isAssignee)) {
+			assertProjectOwner(project, user);
+		}
+	}
+
+	if (isTeamMember && payload.assigneeId !== undefined) {
+		throw new AppError(status.FORBIDDEN, "You can't reassign this task");
+	}
+
+	if (!isTeamMember && payload.assigneeId) {
 		await assertAssignable(project, payload.assigneeId);
 	}
 
@@ -507,14 +545,18 @@ const updateTask = async (
 			...(payload.priority !== undefined ? { priority: payload.priority } : {}),
 			...(payload.due_date !== undefined ? { due_date: payload.due_date } : {}),
 			...(payload.labels !== undefined ? { labels: payload.labels } : {}),
-			...(payload.assigneeId !== undefined
+			...(!isTeamMember && payload.assigneeId !== undefined
 				? { assignee_id: payload.assigneeId }
 				: {}),
 		},
 		select: taskDetailSelect,
 	});
 
-	if (payload.assigneeId && payload.assigneeId !== task.assignee_id) {
+	if (
+		!isTeamMember &&
+		payload.assigneeId &&
+		payload.assigneeId !== task.assignee_id
+	) {
 		await notifyTaskAssignee(updated, payload.assigneeId);
 	}
 
@@ -560,7 +602,7 @@ const moveTask = async (
 		);
 	}
 
-	const { project } = await resolveTaskScope(task.project_id, user);
+	const { project } = await resolveTaskScope(task.project_id, user, "write");
 
 	const isProjectOwner = project.owner_id === user.id;
 	const isAssignee = task.assignee_id === user.id;

@@ -95,6 +95,9 @@ const invitationSelect = {
 	email: true,
 	status: true,
 	expires_at: true,
+	// 🎯 Return the acceptance token so the invitee can accept/decline the
+	// invitation from the in-app list (GET /projects/invitations/mine).
+	token: true,
 	created_at: true,
 	updated_at: true,
 	project: {

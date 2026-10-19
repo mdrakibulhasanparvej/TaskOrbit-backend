@@ -13,7 +13,7 @@ export const updateUserStatusSchema = z.object(
 export const updateUserRoleSchema = z.object(
 	{
 		role: z.enum(Role, {
-			error: "role must be ADMIN, PROJECT_MANAGER or TEAM_MEMBER",
+			error: "role must be ADMIN, PROJECT_MANAGER, TEAM_MEMBER or CLIENT",
 		}),
 	},
 	"Please provide a valid object",

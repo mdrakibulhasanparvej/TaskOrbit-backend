@@ -29,6 +29,7 @@ import { hashPassword } from "./hashPassword";
  *   admin@taskflow.dev    / Admin@123    ADMIN
  *   manager@taskflow.dev  / Manager@123  PROJECT_MANAGER
  *   member@taskflow.dev   / Member@123   TEAM_MEMBER
+ *   client@taskflow.dev   / Client@123   CLIENT
  *   alex|priya|sam|taylor|noah@taskflow.dev / Member@123 (TEAM_MEMBER)
  */
 
@@ -146,6 +147,13 @@ const DEMO_ACCOUNTS: ISeedAccount[] = [
 		email: "noah@taskflow.dev",
 		password: "Member@123",
 		role: Role.TEAM_MEMBER,
+	},
+	{
+		id: seedId("a", 9),
+		name: "Cleo Client",
+		email: "client@taskflow.dev",
+		password: "Client@123",
+		role: Role.CLIENT,
 	},
 ];
 
@@ -816,7 +824,45 @@ const seedNotifications = async () => {
 		});
 	}
 
-	console.log(`${rows.length} notifications ready`);
+	// the CLIENT owns billing now — a settled payment lands in their feed so the
+	// dashboard bell/badge is not empty on first login
+	const client = account("client@taskflow.dev");
+	const clientRows = [
+		{
+			id: seedId("e", 4),
+			type: NotificationType.PAYMENT_SUCCESS,
+			title: "Payment successful",
+			message: "Your Pro plan is active — $12.00 USD paid.",
+			link: "/client/subscription",
+			is_read: false,
+			created_at: daysFromNow(-2),
+		},
+	];
+
+	for (const row of clientRows) {
+		await prisma.notification.upsert({
+			where: { id: row.id },
+			update: {
+				type: row.type,
+				title: row.title,
+				message: row.message,
+				link: row.link,
+				is_read: row.is_read,
+				user_id: client.id,
+				actor_id: null,
+				actor_name: null,
+				created_at: row.created_at,
+			},
+			create: {
+				...row,
+				user_id: client.id,
+				actor_id: null,
+				actor_name: null,
+			},
+		});
+	}
+
+	console.log(`${rows.length + clientRows.length} notifications ready`);
 };
 
 const CONTACT_SEEDS = [
@@ -1019,8 +1065,14 @@ export const runSeed = async () => {
 	await seedAccounts();
 
 	const manager = account("manager@taskflow.dev");
+	const client = account("client@taskflow.dev");
+
+	// Plan entitlements gate the project owner's limits (the project module
+	// reads the owner's Subscription), so the manager keeps a row even though
+	// billing itself now belongs to the CLIENT role.
 	await seedSubscription(manager.id);
-	await seedPayments(manager.id);
+	await seedSubscription(client.id);
+	await seedPayments(client.id);
 	await seedProjects(manager.id);
 	await seedTasks();
 	await seedComments();
@@ -1033,6 +1085,7 @@ export const runSeed = async () => {
 	console.log("  admin@taskflow.dev    / Admin@123    (ADMIN)");
 	console.log("  manager@taskflow.dev  / Manager@123  (PROJECT_MANAGER)");
 	console.log("  member@taskflow.dev   / Member@123   (TEAM_MEMBER)");
+	console.log("  client@taskflow.dev   / Client@123   (CLIENT)");
 };
 
 /** `npm run seed` (tsx src/app/utils/seed.ts) — never triggered by server boot. */

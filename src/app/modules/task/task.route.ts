@@ -28,7 +28,7 @@ router.get("/:id", auth(), TaskController.getTaskById);
 
 router.patch(
 	"/:id",
-	auth(Role.PROJECT_MANAGER),
+	auth(Role.PROJECT_MANAGER, Role.TEAM_MEMBER),
 	validateRequest(updateTaskSchema),
 	TaskController.updateTask,
 );

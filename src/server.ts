@@ -16,8 +16,21 @@ const main = async () => {
 		await prisma.$connect();
 		console.log("Connected to database successfully");
 
-		await redisClient.connect();
-		console.log("Redis connected successfully");
+		// Redis is a cache/OTP store and must never block or crash the API.
+		// Connect in the background: the client's keep-alive ping and reconnect
+		// strategy restore the link on their own, and Redis-backed features
+		// degrade gracefully while it is unavailable.
+		redisClient
+			.connect()
+			.then(() => {
+				console.log("Redis connected successfully");
+			})
+			.catch((error: unknown) => {
+				console.error(
+					"Redis initial connection failed; retrying in the background",
+					error,
+				);
+			});
 
 		await transporter.verify().catch((error: unknown) => {
 			console.log("nodemailer not reachable, OTP mails will fail", error);

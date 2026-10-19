@@ -637,7 +637,7 @@
 							"host": ["{{baseUrl}}"],
 							"path": ["tasks"],
 							"query": [
-								{ "key": "projectId", "value": "{{projectId}}", "description": "required" },
+								{ "key": "projectId", "value": "{{projectId}}", "description": "optional — omit to list your own tasks across every project you can access" },
 								{ "key": "page", "value": "1" },
 								{ "key": "limit", "value": "10" },
 								{ "key": "search", "value": "", "description": "text search on title" },
@@ -650,7 +650,7 @@
 							]
 						}
 					},
-					"description": "Any authenticated user. `projectId` is required.",
+					"description": "Any authenticated user. `projectId` is optional: with it the list is scoped to that project (membership enforced); without it the response is the caller's own assignments across all accessible projects.",
 					"response": []
 				},
 				{

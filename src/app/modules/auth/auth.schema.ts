@@ -12,7 +12,7 @@ export const registerSchema = z.object(
 		name: z.string("Name is required").min(1, "Name is required"),
 		email: z.email("Invalid email format"),
 		password: passwordField,
-		role: z.enum(["PROJECT_MANAGER", "TEAM_MEMBER"]),
+		role: z.enum(["PROJECT_MANAGER", "TEAM_MEMBER", "CLIENT"]),
 	},
 	"Please provide a valid object",
 );

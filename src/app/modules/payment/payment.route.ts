@@ -16,22 +16,18 @@ router.post("/webhook", PaymentController.handleWebhook);
 
 router.get(
 	"/subscription",
-	auth(Role.PROJECT_MANAGER),
+	auth(Role.CLIENT),
 	PaymentController.getMySubscription,
 );
 
 router.post(
 	"/checkout",
-	auth(Role.PROJECT_MANAGER),
+	auth(Role.CLIENT),
 	validateRequest(createCheckoutSchema),
 	PaymentController.createCheckoutSession,
 );
 
-router.get(
-	"/verify",
-	auth(Role.PROJECT_MANAGER),
-	PaymentController.verifyPayment,
-);
+router.get("/verify", auth(Role.CLIENT), PaymentController.verifyPayment);
 
 // static segment before "/history" so the admin list never shadows it
 router.get(
@@ -40,10 +36,6 @@ router.get(
 	PaymentController.getAllPayments,
 );
 
-router.get(
-	"/history",
-	auth(Role.PROJECT_MANAGER),
-	PaymentController.getPaymentHistory,
-);
+router.get("/history", auth(Role.CLIENT), PaymentController.getPaymentHistory);
 
 export const PaymentRoutes = router;
